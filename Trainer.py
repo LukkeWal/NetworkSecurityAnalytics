@@ -14,6 +14,7 @@ Each of these classifiers can be combined with the different feature representat
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from sklearn.base import clone
@@ -36,7 +37,7 @@ RANDOM_STATE = 42
 @dataclass(frozen=True)
 class TrainedClassifier:
     """A fitted classifier plus the label encoder used for its target values."""
-    settings: dict[str, str]
+    settings: dict[str, Any]
     classifier_name: str
     feature_representation_name: str
     model: object
@@ -74,6 +75,7 @@ def get_classifiers(random_state: int = RANDOM_STATE) -> dict[str, object]:
 
 def compare_feature_representations_and_classifiers(
     feature_representations: dict[str, DataSet],
+    exploration_sample_size: int,
 ) -> list[TrainedClassifier]:
     """
     Evaluate every feature representation with every classifier.
@@ -91,7 +93,9 @@ def compare_feature_representations_and_classifiers(
             trained_classifier = clone(classifier).fit(x, y)
             trained_classifiers.append(
                 TrainedClassifier(
-                    settings={},
+                    settings={
+                        "exploration_sample_size": exploration_sample_size,
+                    },
                     classifier_name=classifier_name,
                     feature_representation_name=representation_name,
                     model=trained_classifier,

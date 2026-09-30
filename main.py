@@ -8,7 +8,7 @@ import Visualization
 import Trainer
 import Evaluate
 
-EXPLORATION_SAMPLE_SIZE = 100
+EXPLORATION_SAMPLE_SIZE = 2000
 
 def preprocess(dataset):
     """Preprocess the data, and preprocess sample for feature visualization"""
@@ -31,7 +31,10 @@ def explore_data(data, preprocessed_data, sampled_data):
     )
 
 def blanket_search(feature_representations: dict):
-    trained_models = Trainer.compare_feature_representations_and_classifiers(feature_representations)
+    trained_models = Trainer.compare_feature_representations_and_classifiers(
+        feature_representations,
+        EXPLORATION_SAMPLE_SIZE,
+    )
     return trained_models
 
 def evaluate(trained_models):

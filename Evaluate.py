@@ -9,6 +9,7 @@ Evaluate can take a trained classifier and a dataset and evaluate the classifier
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,7 @@ def evaluate_classifier(
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "classifier_name": trained_classifier.classifier_name,
         "feature_representation_name": trained_classifier.feature_representation_name,
+        "settings": json.dumps(trained_classifier.settings),
         "accuracy": accuracy_score(y_true, y_pred),
         "precision": precision_score(y_true, y_pred, average=average, zero_division=0),
         "recall": recall_score(y_true, y_pred, average=average, zero_division=0),
