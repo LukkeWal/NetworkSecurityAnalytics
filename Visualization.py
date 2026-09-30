@@ -9,34 +9,35 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
 
+from DataHandler import DataSet, X_and_Y
 
 TARGET_COLUMN = "Label"
 ATTACK_TYPE_COLUMN = "traffic_category"
 FIGURES_PATH = Path("figures")
-EXPLORATION_SAMPLE_SIZE = 10_000
 MAX_FEATURES = 100
 
 
-def print_dataset_information(data: pd.DataFrame) -> None:
+def print_dataset_information(data: DataSet) -> None:
     """Print compact information about the dataset."""
     print("Full dataset information")
     print("===================")
-    print(f"Rows: {len(data):,}")
-    print(f"Columns: {len(data.columns):,}")
-    print(f"Memory usage: {data.memory_usage(deep=True).sum() / 1024 ** 2:,.2f} MB")
+    print(f"Rows: {len(data.train.y):,}")
+    print(f"Columns: {len(data.train.x.columns):,}")
 
     print("\nColumn types")
-    print(data.dtypes.value_counts().to_string())
+    print(_get_column_types(data).value_counts().to_string())
 
     print("\nLabel distribution")
-    print(data[TARGET_COLUMN].value_counts().sort_index().to_string())
+    print(_get_labels(data).value_counts().sort_index().to_string())
 
-    if ATTACK_TYPE_COLUMN in data.columns:
+    if _has_feature_column(data, ATTACK_TYPE_COLUMN):
         print("\nTraffic category distribution")
-        print(data[ATTACK_TYPE_COLUMN].value_counts().to_string())
+        print(_get_feature_column(data, ATTACK_TYPE_COLUMN).value_counts().to_string())
 
-    missing_values = data.isna().sum()
+    missing_values = _get_missing_values(data)
     missing_values = missing_values[missing_values > 0].sort_values(ascending=False)
     print("\nMissing values")
     if missing_values.empty:
@@ -50,12 +51,8 @@ def print_dataset_information(data: pd.DataFrame) -> None:
 
 
 def create_exploration_visualizations(
-    data: pd.DataFrame,
-    sampled_data: pd.DataFrame,
-    pca_features: pd.DataFrame,
-    tsne_features: pd.DataFrame,
-    umap_features: pd.DataFrame | None = None,
-    supervised_umap_features: pd.DataFrame | None = None,
+    data: DataSet,
+    sampled_data: DataSet,
     figures_path: Path | str = FIGURES_PATH,
 ) -> None:
     """Create and save plots for quick dataset exploration."""
@@ -65,8 +62,8 @@ def create_exploration_visualizations(
     axis = plot_label_distribution(data)
     _save_current_figure(axis, figures_path, "label_distribution.png")
 
-    if ATTACK_TYPE_COLUMN in data.columns:
-        axis = data[ATTACK_TYPE_COLUMN].value_counts().plot(
+    if _has_feature_column(data, ATTACK_TYPE_COLUMN):
+        axis = _get_feature_column(data, ATTACK_TYPE_COLUMN).value_counts().plot(
             kind="bar",
             title="Traffic category distribution",
         )
@@ -100,29 +97,16 @@ def create_exploration_visualizations(
     )
     _save_current_figure(axis, figures_path, "feature_outliers.png")
 
-    axis = plot_feature_embedding(pca_features)
-    _save_current_figure(axis, figures_path, "pca_features.png")
-
-    axis = plot_feature_embedding(tsne_features)
-    _save_current_figure(axis, figures_path, "tsne_features.png")
-
-    if umap_features is not None:
-        axis = plot_feature_embedding(umap_features)
-        _save_current_figure(axis, figures_path, "umap_features.png")
-
-    if supervised_umap_features is not None:
-        axis = plot_feature_embedding(supervised_umap_features)
-        _save_current_figure(axis, figures_path, "supervised_umap_features.png")
+    tsne_2D = get_tsne_features(sampled_data)
+    axis = plot_feature_embedding(tsne_2D)
+    _save_current_figure(axis, figures_path, "tsne.png")
 
     print(f"\nSaved exploratory visualizations to {figures_path.resolve()}")
 
 
-def plot_label_distribution(data: pd.DataFrame):
+def plot_label_distribution(data: DataSet):
     """Visualize the target label distribution."""
-    if TARGET_COLUMN not in data.columns:
-        raise ValueError(f"Target column '{TARGET_COLUMN}' was not found in the DataFrame.")
-
-    label_counts = data[TARGET_COLUMN].value_counts().sort_index()
+    label_counts = _get_labels(data).value_counts().sort_index()
     axis = label_counts.plot(kind="bar", title="Label distribution")
     axis.set_xlabel(TARGET_COLUMN)
     axis.set_ylabel("Count")
@@ -131,7 +115,7 @@ def plot_label_distribution(data: pd.DataFrame):
 
 
 def plot_feature_correlations(
-    data: pd.DataFrame,
+    data: DataSet,
     exclude_column: str | None = None,
 ):
     """Visualize correlations between the strongest numeric features."""
@@ -151,7 +135,7 @@ def plot_feature_correlations(
 
 
 def plot_feature_distributions(
-    data: pd.DataFrame,
+    data: DataSet,
     exclude_column: str | None = None,
     bins: int = 30,
     log_scale: bool = False,
@@ -188,7 +172,7 @@ def plot_feature_distributions(
 
 
 def plot_outliers(
-    data: pd.DataFrame,
+    data: DataSet,
     exclude_column: str | None = None,
 ):
     """Visualize outliers in numeric features with boxplots."""
@@ -229,7 +213,7 @@ def plot_feature_embedding(
 
 
 def _select_high_variance_features(
-    data: pd.DataFrame,
+    data: DataSet,
     exclude_column: str | None,
 ) -> pd.DataFrame:
     features = _select_numeric_features(data, exclude_column)
@@ -240,12 +224,87 @@ def _select_high_variance_features(
     return features[selected_columns]
 
 
+def get_tsne_features(
+    data: DataSet,
+    perplexity: float = 30.0,
+) -> pd.DataFrame:
+    """Return t-SNE feature components with the target column attached when present."""
+    features = _select_numeric_features(data, TARGET_COLUMN)
+    features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.fillna(features.median(numeric_only=True)).fillna(0)
+
+    scaler = StandardScaler()
+    scaled_features = scaler.fit_transform(features)
+    effective_perplexity = min(perplexity, len(features) - 1)
+    reducer = TSNE(
+        n_components=2,
+        perplexity=effective_perplexity,
+        random_state=42,
+        init="pca",
+        learning_rate="auto",
+    )
+    components = reducer.fit_transform(scaled_features)
+    embedding = pd.DataFrame(components, columns=["tsne_1", "tsne_2"], index=features.index)
+
+    embedding[TARGET_COLUMN] = _get_labels(data).to_numpy()
+    if _has_feature_column(data, ATTACK_TYPE_COLUMN):
+        embedding[ATTACK_TYPE_COLUMN] = _get_feature_column(data, ATTACK_TYPE_COLUMN).to_numpy()
+
+    return embedding
+
+
 def _select_numeric_features(
-    data: pd.DataFrame,
+    data: DataSet,
     exclude_column: str | None = TARGET_COLUMN,
 ) -> pd.DataFrame:
-    features = data.drop(columns=[exclude_column], errors="ignore") if exclude_column else data
+    features = _get_all_features(data)
+    features = features.drop(columns=[exclude_column], errors="ignore") if exclude_column else features
     return features.select_dtypes(include="number")
+
+
+def _get_all_features(data: DataSet) -> pd.DataFrame:
+    return pd.concat(
+        [split.x for split in [data.train, data.val, data.test]],
+        ignore_index=True,
+    )
+
+
+def _get_labels(data: DataSet) -> pd.Series:
+    return pd.concat(
+        [split.y for split in [data.train, data.val, data.test]],
+        ignore_index=True,
+    )
+
+
+def _get_feature_column(data: DataSet, column: str) -> pd.Series:
+    return pd.concat(
+        [
+            split.x[column]
+            if column in split.x.columns
+            else pd.Series([pd.NA] * len(split.x), name=column)
+            for split in [data.train, data.val, data.test]
+        ],
+        ignore_index=True,
+    )
+
+
+def _has_feature_column(data: DataSet, column: str) -> bool:
+    return any(column in split.x.columns for split in [data.train, data.val, data.test])
+
+
+def _get_column_types(data: DataSet) -> pd.Series:
+    return pd.concat(
+        [
+            data.train.x.dtypes,
+            pd.Series({TARGET_COLUMN: data.train.y.dtype}),
+        ]
+    )
+
+
+def _get_missing_values(data: DataSet) -> pd.Series:
+    feature_missing_values = _get_all_features(data).isna().sum()
+    label_missing_values = pd.Series({TARGET_COLUMN: _get_labels(data).isna().sum()})
+    return pd.concat([feature_missing_values, label_missing_values])
 
 
 def _save_current_figure(axis, figures_path: Path, file_name: str) -> None:

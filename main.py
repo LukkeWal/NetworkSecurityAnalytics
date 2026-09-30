@@ -5,43 +5,54 @@ main.py is the entry point of the code, and allows you to control which parts of
 import DataHandler
 import PreProcessing
 import Visualization
+import Trainer
+import Evaluate
 
-def preprocess(data):
+EXPLORATION_SAMPLE_SIZE = 100
+
+def preprocess(dataset):
     """Preprocess the data, and preprocess sample for feature visualization"""
-    preprocessed_data = PreProcessing.preprocess_data(data)
-    sampled_data = PreProcessing.sample_data(
+    preprocessed_data = PreProcessing.preprocess_data(dataset)
+    sample_dataset = PreProcessing.sample_data(
         preprocessed_data,
-        Visualization.EXPLORATION_SAMPLE_SIZE,
+        EXPLORATION_SAMPLE_SIZE,
     )
+    feature_representations = PreProcessing.get_all_feature_representations(sample_dataset)
+    return (preprocessed_data,
+            sample_dataset,
+            feature_representations)
 
-    pca_features = PreProcessing.get_pca_features(sampled_data)
-    tsne_features = PreProcessing.get_tsne_features(sampled_data)
-    umap_features = PreProcessing.get_umap_features(sampled_data)
-    supervised_umap_features = PreProcessing.get_umap_features(sampled_data, supervised=True)
-    return preprocessed_data, sampled_data, pca_features, tsne_features, umap_features, supervised_umap_features
-
-def explore_data(data, preprocessed_data, sampled_data, pca_features, tsne_features, umap_features, supervised_umap_features):
+def explore_data(data, preprocessed_data, sampled_data):
     """Explore the data by visualizing and printing information"""
     Visualization.print_dataset_information(data)
     Visualization.create_exploration_visualizations(
         preprocessed_data,
         sampled_data,
-        pca_features,
-        tsne_features,
-        umap_features,
-        supervised_umap_features,
     )
+
+def blanket_search(feature_representations: dict):
+    trained_models = Trainer.compare_feature_representations_and_classifiers(feature_representations)
+    return trained_models
+
+def evaluate(trained_models):
+    return Evaluate.evaluate_classifiers(trained_models)
 
 
 def main() -> None:
     """Outline of the tasks this pipeline performs"""
     # read data
     full_data = DataHandler.read_data()
-    train, val, test = DataHandler.get_stratified_split()
+    dataset = DataHandler.get_stratified_split(full_data) # we will not use val or test for now
+
     # preprocess data
-    preprocessed_train_data = preprocess(train)
+    preprocessed_data, sample_dataset, sample_feature_representations = preprocess(dataset)
+
     # visualize and explore data
-    explore_data(full_data, *preprocessed_train_data)
+    explore_data(dataset, preprocessed_data, sample_dataset)
+    # train combining feature representations and classifiers
+    trained_models = blanket_search(sample_feature_representations)
+    # evaluate trained models
+    evaluate(trained_models)
 
 
 if __name__ == "__main__":
