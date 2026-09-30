@@ -20,7 +20,7 @@ MAX_FEATURES = 100
 
 def print_dataset_information(data: pd.DataFrame) -> None:
     """Print compact information about the dataset."""
-    print("Dataset information")
+    print("Full dataset information")
     print("===================")
     print(f"Rows: {len(data):,}")
     print(f"Columns: {len(data.columns):,}")

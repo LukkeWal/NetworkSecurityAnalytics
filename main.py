@@ -36,11 +36,12 @@ def explore_data(data, preprocessed_data, sampled_data, pca_features, tsne_featu
 def main() -> None:
     """Outline of the tasks this pipeline performs"""
     # read data
-    data = DataHandler.read_data()
+    full_data = DataHandler.read_data()
+    train, val, test = DataHandler.get_stratified_split()
     # preprocess data
-    preprocessed_data = preprocess(data)
+    preprocessed_train_data = preprocess(train)
     # visualize and explore data
-    explore_data(data, *preprocessed_data)
+    explore_data(full_data, *preprocessed_train_data)
 
 
 if __name__ == "__main__":
