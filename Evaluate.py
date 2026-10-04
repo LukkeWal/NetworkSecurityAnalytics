@@ -15,50 +15,177 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+)
 
 from DataHandler import X_and_Y
 
 
 RESULTS_FILE_PATH = Path("evaluation_results.csv")
+MINIMUM_RECALL_FOR_THRESHOLD = 0.95
 
 
 def evaluate_classifier(
     trained_classifier: Any,
     validation_split: X_and_Y | None = None,
+    test_split: X_and_Y | None = None,
     results_file_path: Path | str = RESULTS_FILE_PATH,
 ) -> dict[str, Any]:
     """
-    Evaluate one trained classifier on a validation split and append the results to a CSV file.
+    Tune the decision threshold on validation data and evaluate one trained classifier on test data.
 
-    If no validation split is supplied, the validation split stored on the trained classifier's dataset is used.
+    If no splits are supplied, the validation and test splits stored on the trained classifier's dataset are used.
     """
     if validation_split is None:
         validation_split = trained_classifier.dataset.val
+    if test_split is None:
+        test_split = trained_classifier.dataset.test
 
-    x_validation = validation_split.x.select_dtypes(include="number")
-    y_true = trained_classifier.label_encoder.transform(validation_split.y)
-    y_pred = trained_classifier.model.predict(x_validation)
+    x_test = test_split.x.select_dtypes(include="number")
+    y_test = trained_classifier.label_encoder.transform(test_split.y)
+    threshold_result = _tune_threshold_for_precision_at_minimum_recall(
+        trained_classifier,
+        validation_split,
+        minimum_recall=MINIMUM_RECALL_FOR_THRESHOLD,
+    )
+
+    if threshold_result["threshold_tuned"]:
+        y_pred = _predict_with_threshold(
+            trained_classifier.model,
+            x_test,
+            threshold_result["threshold"],
+        )
+    else:
+        y_pred = trained_classifier.model.predict(x_test)
+
+    settings = {
+        **trained_classifier.settings,
+        "threshold_tuned": threshold_result["threshold_tuned"],
+        "threshold": threshold_result["threshold"],
+        "threshold_selection_metric": f"max_precision_at_recall_at_least_{MINIMUM_RECALL_FOR_THRESHOLD}",
+    }
 
     average = "binary" if len(trained_classifier.label_encoder.classes_) == 2 else "macro"
     metrics = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "classifier_name": trained_classifier.classifier_name,
         "feature_representation_name": trained_classifier.feature_representation_name,
-        "settings": json.dumps(trained_classifier.settings),
-        "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, average=average, zero_division=0),
-        "recall": recall_score(y_true, y_pred, average=average, zero_division=0),
-        "f1": f1_score(y_true, y_pred, average=average, zero_division=0),
+        "settings": json.dumps(settings),
+        "evaluation_split": "test",
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred, average=average, zero_division=0),
+        "recall": recall_score(y_test, y_pred, average=average, zero_division=0),
+        "f1": f1_score(y_test, y_pred, average=average, zero_division=0),
         "false_positive_rate": _false_positive_rate(
-            y_true,
+            y_test,
             y_pred,
             labels=list(range(len(trained_classifier.label_encoder.classes_))),
         ),
+        "validation_precision_at_recall_0_95": threshold_result["validation_precision"],
+        "validation_recall_at_selected_threshold": threshold_result["validation_recall"],
+        "validation_f1_at_selected_threshold": threshold_result["validation_f1"],
     }
 
     _append_results(metrics, Path(results_file_path))
     return metrics
+
+
+def _tune_threshold_for_precision_at_minimum_recall(
+    trained_classifier: Any,
+    validation_split: X_and_Y,
+    minimum_recall: float,
+) -> dict[str, Any]:
+    x_validation = validation_split.x.select_dtypes(include="number")
+    y_true = trained_classifier.label_encoder.transform(validation_split.y)
+    if len(trained_classifier.label_encoder.classes_) != 2:
+        return _untuned_threshold_result()
+
+    scores = _get_positive_scores(trained_classifier.model, x_validation)
+    if scores is None:
+        return _untuned_threshold_result()
+
+    precision, recall, thresholds = precision_recall_curve(y_true, scores, pos_label=1)
+    if len(thresholds) == 0:
+        return _untuned_threshold_result()
+
+    candidate_indices = np.flatnonzero(recall[:-1] >= minimum_recall)
+    if len(candidate_indices) == 0:
+        return _untuned_threshold_result()
+
+    best_index = max(
+        candidate_indices,
+        key=lambda index: (
+            precision[index],
+            thresholds[index],
+            _f1_from_precision_recall(precision[index], recall[index]),
+        ),
+    )
+    selected_threshold = float(thresholds[best_index])
+    selected_precision = float(precision[best_index])
+    selected_recall = float(recall[best_index])
+
+    return {
+        "threshold_tuned": True,
+        "threshold": selected_threshold,
+        "validation_precision": selected_precision,
+        "validation_recall": selected_recall,
+        "validation_f1": _f1_from_precision_recall(selected_precision, selected_recall),
+    }
+
+
+def _get_positive_scores(model: Any, x: pd.DataFrame) -> np.ndarray | None:
+    if hasattr(model, "predict_proba"):
+        probabilities = model.predict_proba(x)
+        positive_index = _positive_class_index(model)
+        return probabilities[:, positive_index]
+
+    if hasattr(model, "decision_function"):
+        scores = model.decision_function(x)
+        if scores.ndim == 1:
+            return scores
+        positive_index = _positive_class_index(model)
+        return scores[:, positive_index]
+
+    return None
+
+
+def _positive_class_index(model: Any) -> int:
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        return 1
+    matches = np.flatnonzero(classes == 1)
+    if len(matches) > 0:
+        return int(matches[0])
+    return len(classes) - 1
+
+
+def _predict_with_threshold(model: Any, x: pd.DataFrame, threshold: float) -> np.ndarray:
+    scores = _get_positive_scores(model, x)
+    if scores is None:
+        return model.predict(x)
+    return (scores >= threshold).astype(int)
+
+
+def _untuned_threshold_result() -> dict[str, Any]:
+    return {
+        "threshold_tuned": False,
+        "threshold": None,
+        "validation_precision": None,
+        "validation_recall": None,
+        "validation_f1": None,
+    }
+
+
+def _f1_from_precision_recall(precision: float, recall: float) -> float:
+    denominator = precision + recall
+    return 2 * precision * recall / denominator if denominator else 0.0
 
 
 def evaluate_classifiers(
@@ -99,10 +226,10 @@ def _false_positive_rate(y_true: pd.Series, y_pred: pd.Series, labels: list[int]
 
 def _append_results(metrics: dict[str, Any], results_file_path: Path) -> None:
     results_file_path.parent.mkdir(parents=True, exist_ok=True)
-    results = pd.DataFrame([metrics])
-    results.to_csv(
-        results_file_path,
-        mode="a",
-        header=not results_file_path.exists(),
-        index=False,
-    )
+    new_results = pd.DataFrame([metrics])
+    if results_file_path.exists() and results_file_path.stat().st_size > 0:
+        existing_results = pd.read_csv(results_file_path)
+        results = pd.concat([existing_results, new_results], ignore_index=True, sort=False)
+    else:
+        results = new_results
+    results.to_csv(results_file_path, index=False)

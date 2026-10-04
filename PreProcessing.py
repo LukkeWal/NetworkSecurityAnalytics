@@ -8,6 +8,8 @@ We will:
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -153,18 +155,35 @@ def minority_class_oversampling(
 
 
 def get_all_feature_representations(data: DataSet) -> dict[str, DataSet]:
+    start_time = perf_counter()
+    features = {
+        "raw_numeric": _get_clean_numeric_feature_dataset(data),
+    }
+    print(f"[timing] feature representation raw_numeric: {perf_counter() - start_time:.2f}s")
+
+    start_time = perf_counter()
     scaled = _get_scaled_feature_splits(data)
+    print(f"[timing] feature scaling: {perf_counter() - start_time:.2f}s")
     labels = data.train.label_encoder.transform(data.train.y)
 
     reducers = {
         "pca": PCA(random_state=RANDOM_STATE),
-        "umap": umap.UMAP(random_state=RANDOM_STATE),
-        "umap_supervised": umap.UMAP(random_state=RANDOM_STATE),
+        "pca_95": PCA(n_components=0.95, random_state=RANDOM_STATE),
     }
-    features = {}
+
+    for n_components in (5, 10, 20):
+        reducers[f"umap_{n_components}"] = umap.UMAP(
+            n_components=n_components,
+            random_state=RANDOM_STATE,
+        )
+        reducers[f"umap_supervised_{n_components}"] = umap.UMAP(
+            n_components=n_components,
+            random_state=RANDOM_STATE,
+        )
 
     for reducer_name, reducer in reducers.items():
-        if reducer_name == "umap_supervised":
+        start_time = perf_counter()
+        if reducer_name.startswith("umap_supervised"):
             train_components = reducer.fit_transform(
                 scaled["train"], y=labels
             )
@@ -188,6 +207,7 @@ def get_all_feature_representations(data: DataSet) -> dict[str, DataSet]:
         )
         result = DataSet(train=train, val=val, test=test)
         features[reducer_name] = result
+        print(f"[timing] feature representation {reducer_name}: {perf_counter() - start_time:.2f}s")
     return features
 
 
@@ -317,6 +337,30 @@ def _get_scaled_feature_splits(data: DataSet) -> dict[str, pd.DataFrame]:
             index=data.test.x.index,
         ),
     }
+
+
+def _get_clean_numeric_feature_dataset(data: DataSet) -> DataSet:
+    numeric_columns = data.train.x.select_dtypes(include="number").columns
+    train_features = _clean_numeric_features(data.train.x, numeric_columns)
+    fill_values = train_features.median(numeric_only=True).fillna(0)
+
+    return DataSet(
+        train=X_and_Y(
+            x=train_features.reset_index(drop=True),
+            y=data.train.y.reset_index(drop=True),
+            label_encoder=data.train.label_encoder,
+        ),
+        val=X_and_Y(
+            x=_clean_numeric_features(data.val.x, numeric_columns, fill_values).reset_index(drop=True),
+            y=data.val.y.reset_index(drop=True),
+            label_encoder=data.val.label_encoder,
+        ),
+        test=X_and_Y(
+            x=_clean_numeric_features(data.test.x, numeric_columns, fill_values).reset_index(drop=True),
+            y=data.test.y.reset_index(drop=True),
+            label_encoder=data.test.label_encoder,
+        ),
+    )
 
 
 def _build_component_data_frame(
