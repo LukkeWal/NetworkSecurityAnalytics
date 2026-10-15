@@ -4,6 +4,7 @@ Visualization contains dataset exploration utilities, reports, and plots.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -18,6 +19,71 @@ TARGET_COLUMN = "Label"
 ATTACK_TYPE_COLUMN = "traffic_category"
 FIGURES_PATH = Path("figures")
 MAX_FEATURES = 100
+
+
+def create_learning_curve_visualizations(
+    results_file_path: Path | str = "evaluation_results.csv",
+    figures_path: Path | str = FIGURES_PATH,
+) -> dict[str, Path]:
+    """Save the latest recorded XGBoost and RF curves in CSV append order.
+
+    Includes weighted variants. Historical rows without curves are skipped.
+    Returns the saved plot paths, keyed by model family.
+    """
+    results_file_path = Path(results_file_path)
+    if not results_file_path.exists():
+        print(f"No learning curves found: {results_file_path} does not exist.")
+        return {}
+    results = pd.read_csv(results_file_path)
+    if not {"classifier_name", "training_curve"}.issubset(results.columns):
+        print("No recorded learning curves found in the results CSV.")
+        return {}
+
+    figures_path = Path(figures_path)
+    saved_paths = {}
+    families = {
+        "xgboost": ("xgboost", "xgboost_scale_pos_weight"),
+        "random_forest": ("random_forest", "random_forest_balanced"),
+    }
+    for family, classifier_names in families.items():
+        candidates = results.loc[
+            results["classifier_name"].isin(classifier_names)
+            & results["training_curve"].notna()
+            & results["training_curve"].astype(str).str.strip().ne("")
+        ]
+        if candidates.empty:
+            print(f"No recorded learning curve found for {family}.")
+            continue
+        latest = candidates.iloc[-1]
+        curve = json.loads(latest["training_curve"])
+        title = str(latest["classifier_name"])
+        for column in ("feature_representation_name", "timestamp"):
+            if column in latest and pd.notna(latest[column]):
+                title += f" | {latest[column]}"
+        axis = plot_learning_curve(curve, title=title)
+        figures_path.mkdir(parents=True, exist_ok=True)
+        filename = f"{family}_learning_curve.png"
+        _save_current_figure(axis, figures_path, filename)
+        saved_paths[family] = figures_path / filename
+        print(f"Saved learning curve to {saved_paths[family].resolve()}")
+    return saved_paths
+
+
+def plot_learning_curve(curve: dict, title: str = "Learning curve"):
+    """Plot a recorded ensemble's training and validation log loss."""
+    steps = curve["steps"]
+    if not steps or not (len(steps) == len(curve["train_loss"]) == len(curve["val_loss"])):
+        raise ValueError("Learning curve steps and losses must have equal, nonzero lengths.")
+    figure, axis = plt.subplots(figsize=(10, 6))
+    axis.plot(steps, curve["train_loss"], label="Training loss")
+    axis.plot(steps, curve["val_loss"], label="Validation loss")
+    axis.set_xlabel({"boosting_round": "Boosting round", "tree_count": "Number of trees"}[curve["step_name"]])
+    axis.set_ylabel("Log loss")
+    axis.set_title(title)
+    axis.legend()
+    axis.grid(alpha=0.3)
+    figure.tight_layout()
+    return axis
 
 
 def print_dataset_information(data: DataSet) -> None:
@@ -319,3 +385,7 @@ def _get_default_color_column(data: pd.DataFrame) -> str | None:
     if TARGET_COLUMN in data.columns:
         return TARGET_COLUMN
     return None
+
+
+if __name__ == "__main__":
+    create_learning_curve_visualizations()

@@ -18,9 +18,11 @@ from time import perf_counter
 from typing import Any
 
 import pandas as pd
+import numpy as np
 from sklearn.base import clone
 from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import log_loss
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -44,6 +46,7 @@ class TrainedClassifier:
     model: object
     dataset: DataSet
     label_encoder: LabelEncoder
+    training_curve: dict[str, Any] | None = None
 
 
 def get_classifiers(
@@ -75,7 +78,7 @@ def get_classifiers(
             },
         ),
         "xgboost": (
-            XGBClassifier(random_state=random_state),
+            XGBClassifier(random_state=random_state, early_stopping_rounds=20),
             {"classifier_weighting": "none"},
         ),
         "svm": (
@@ -129,6 +132,7 @@ def get_classifiers(
             XGBClassifier(
                 random_state=random_state,
                 scale_pos_weight=scale_pos_weight,
+                early_stopping_rounds=20,
             ),
             {
                 "classifier_weighting": "scale_pos_weight",
@@ -143,6 +147,8 @@ def compare_feature_representations_and_classifiers(
     feature_representations: dict[str, DataSet],
     exploration_sample_size: int,
     resampling_strategy: str = "no_resampling",
+    model_names: list[str] | None = None,
+    model_params: dict[str, dict[str, Any]] | None = None,
 ) -> list[TrainedClassifier]:
     """
     Evaluate every feature representation with every classifier.
@@ -155,10 +161,19 @@ def compare_feature_representations_and_classifiers(
     for representation_name, representation in feature_representations.items():
         x, y, label_encoder = _split_features_and_target(representation.train)
         classifiers = get_classifiers(random_state=RANDOM_STATE, target=y)
+        if model_names is not None:
+            unavailable = set(model_names) - classifiers.keys()
+            if unavailable:
+                raise ValueError(f"Models unavailable for this target: {sorted(unavailable)}")
+            classifiers = {name: classifiers[name] for name in model_names}
 
         for classifier_name, (classifier, classifier_settings) in classifiers.items():
+            classifier = clone(classifier)
+            classifier.set_params(**(model_params or {}).get(classifier_name, {}))
             start_time = perf_counter()
-            trained_classifier = clone(classifier).fit(x, y)
+            trained_classifier, training_curve = _fit_with_training_curve(
+                classifier, x, y, representation.val, label_encoder
+            )
             elapsed_time = perf_counter() - start_time
             print(
                 f"[timing] training {resampling_strategy}/{representation_name}/{classifier_name}: "
@@ -172,15 +187,71 @@ def compare_feature_representations_and_classifiers(
                         "training_sample_size": int(len(y)),
                         "training_class_counts": _class_counts(y),
                         **classifier_settings,
+                        "model_params": classifier.get_params(deep=False) if not isinstance(classifier, Pipeline)
+                        else classifier.named_steps["classifier"].get_params(deep=False),
+                        **({
+                            "best_boosting_round": int(trained_classifier.best_iteration) + 1,
+                            "best_validation_log_loss": float(trained_classifier.best_score),
+                            "boosting_rounds_trained": len(training_curve["steps"]),
+                        } if isinstance(trained_classifier, XGBClassifier)
+                        and trained_classifier.get_params().get("early_stopping_rounds") else {}),
                     },
                     classifier_name=classifier_name,
                     feature_representation_name=representation_name,
                     model=trained_classifier,
                     dataset=representation,
                     label_encoder=label_encoder,
+                    training_curve=training_curve,
                 )
             )
     return trained_classifiers
+
+
+def _fit_with_training_curve(
+    classifier: Any,
+    x: pd.DataFrame,
+    y: pd.Series,
+    validation_split: X_and_Y,
+    label_encoder: LabelEncoder,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Fit a model and record cumulative ensemble log loss where supported."""
+    if not isinstance(classifier, (XGBClassifier, RandomForestClassifier)):
+        return classifier.fit(x, y), None
+
+    x_val = validation_split.x.select_dtypes(include="number").loc[:, x.columns]
+    y_val = label_encoder.transform(validation_split.y)
+    if isinstance(classifier, XGBClassifier):
+        metric = "logloss" if len(label_encoder.classes_) == 2 else "mlogloss"
+        classifier.set_params(eval_metric=metric)
+        classifier.fit(x, y, eval_set=[(x, y), (x_val, y_val)], verbose=False)
+        history = classifier.evals_result()
+        train_loss = history["validation_0"][metric]
+        val_loss = history["validation_1"][metric]
+        step_name = "boosting_round"
+    else:
+        classifier.fit(x, y)
+        labels = classifier.classes_
+        train_sum = np.zeros((len(x), len(labels)), dtype=float)
+        val_sum = np.zeros((len(x_val), len(labels)), dtype=float)
+        train_loss, val_loss = [], []
+        # Trees use the forest's encoded class order. Prefix averages reproduce
+        # predict_proba for a forest containing just the first N fitted trees.
+        x_array = x.to_numpy(dtype=np.float32)
+        val_array = x_val.to_numpy(dtype=np.float32)
+        for count, tree in enumerate(classifier.estimators_, start=1):
+            train_sum += tree.predict_proba(x_array)
+            val_sum += tree.predict_proba(val_array)
+            train_loss.append(float(log_loss(y, train_sum / count, labels=labels)))
+            val_loss.append(float(log_loss(y_val, val_sum / count, labels=labels)))
+        step_name = "tree_count"
+
+    return classifier, {
+        "metric": "log_loss",
+        "step_name": step_name,
+        "steps": list(range(1, len(train_loss) + 1)),
+        "train_loss": train_loss,
+        "val_loss": val_loss,
+    }
 
 
 def _split_features_and_target(

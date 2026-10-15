@@ -91,6 +91,11 @@ def evaluate_classifier(
         "validation_precision_at_recall_0_95": threshold_result["validation_precision"],
         "validation_recall_at_selected_threshold": threshold_result["validation_recall"],
         "validation_f1_at_selected_threshold": threshold_result["validation_f1"],
+        "training_curve": (
+            json.dumps(trained_classifier.training_curve, allow_nan=False)
+            if getattr(trained_classifier, "training_curve", None) is not None
+            else None
+        ),
     }
 
     _append_results(metrics, Path(results_file_path))

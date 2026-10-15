@@ -154,14 +154,18 @@ def minority_class_oversampling(
     )
 
 
-def get_all_feature_representations(data: DataSet) -> dict[str, DataSet]:
+def get_all_feature_representations(
+    data: DataSet, selected: list[str] | None = None,
+) -> dict[str, DataSet]:
     start_time = perf_counter()
     features = {
         "raw_numeric": _get_clean_numeric_feature_dataset(data),
-    }
+    } if selected is None or "raw_numeric" in selected else {}
     print(f"[timing] feature representation raw_numeric: {perf_counter() - start_time:.2f}s")
 
     start_time = perf_counter()
+    if selected == ["raw_numeric"]:
+        return features
     scaled = _get_scaled_feature_splits(data)
     print(f"[timing] feature scaling: {perf_counter() - start_time:.2f}s")
     labels = data.train.label_encoder.transform(data.train.y)
@@ -182,6 +186,8 @@ def get_all_feature_representations(data: DataSet) -> dict[str, DataSet]:
         )
 
     for reducer_name, reducer in reducers.items():
+        if selected is not None and reducer_name not in selected:
+            continue
         start_time = perf_counter()
         if reducer_name.startswith("umap_supervised"):
             train_components = reducer.fit_transform(
