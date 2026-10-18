@@ -1,0 +1,7 @@
+traffic_category,flows,suricata_flagged,ml_flagged,both_flagged
+Background,312,0.0,0.0,0.0
+Benign,62319,0.0017651117636675814,0.12490572698534957,0.0
+Bruteforce,1197,0.0,0.9924812030075187,0.0
+Bruteforce-XML,1013,0.0,1.0,0.0
+Probing,4675,0.0,0.9961497326203208,0.0
+XMRIGCC CryptoMiner,475,0.0,1.0,0.0

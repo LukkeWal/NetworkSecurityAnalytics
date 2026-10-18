@@ -1,0 +1,7 @@
+,,ml_no,ml_yes
+all flows,suricata_no,54764,15117
+all flows,suricata_yes,110,0
+attacks,suricata_no,27,7333
+attacks,suricata_yes,0,0
+benign + background,suricata_no,54737,7784
+benign + background,suricata_yes,110,0

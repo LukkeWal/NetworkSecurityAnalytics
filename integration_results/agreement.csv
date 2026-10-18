@@ -1,0 +1,5 @@
+,attack,benign,background,total
+both,0,0,0,0
+suricata_only,0,110,0,110
+ml_only,7333,7784,0,15117
+neither,27,54425,312,54764
