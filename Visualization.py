@@ -21,6 +21,104 @@ FIGURES_PATH = Path("figures")
 MAX_FEATURES = 100
 
 
+def create_confusion_matrix_visualizations(
+    results_file_path: Path | str = "evaluation_results.csv",
+    figures_path: Path | str = FIGURES_PATH,
+) -> dict[str, Path]:
+    """Plot default/selected test matrices for the latest recorded run per classifier."""
+    path = Path(results_file_path)
+    required = {"classifier_name", "class_labels", "default_confusion_matrix", "confusion_matrix"}
+    if not path.exists():
+        print(f"No confusion matrices found: {path} does not exist.")
+        return {}
+    results = pd.read_csv(path)
+    if not required.issubset(results.columns):
+        print("No recorded confusion matrices found in the results CSV.")
+        return {}
+    candidates = results.dropna(subset=list(required))
+    latest = candidates.groupby("classifier_name", sort=False).tail(1)
+    saved = {}
+    for _, row in latest.iterrows():
+        labels = json.loads(row["class_labels"])
+        settings = json.loads(row["settings"])
+        matrices = {column: np.asarray(json.loads(row[column]))
+                    for column in ("default_confusion_matrix", "confusion_matrix")}
+        figure, axes = plt.subplots(1, 2, figsize=(11, 5), layout="constrained")
+        for axis, column, title in zip(
+            axes, ("default_confusion_matrix", "confusion_matrix"),
+            (f"Default threshold: {row.get('default_threshold')}",
+             f"Tuned threshold: {settings['threshold']:.4g}" if settings.get("threshold_tuned") else "Selected: default"),
+        ):
+            matrix = matrices[column]
+            image = _plot_percentage_matrix(axis, matrix)
+            axis.set_xticks(range(len(labels)), labels=labels)
+            axis.set_yticks(range(len(labels)), labels=labels)
+            axis.set_xlabel("Predicted label")
+            axis.set_ylabel("True label")
+            axis.set_title(title)
+        figure.suptitle(
+            f"{row['classifier_name']} | {row.get('feature_representation_name', '')}\n"
+            f"{row.get('evaluation_split', 'test')} confusion matrices | {row.get('timestamp', '')}"
+        )
+        figure.colorbar(image, ax=axes, label="Percentage of actual class (%)", shrink=0.8)
+        output = Path(figures_path)
+        output.mkdir(parents=True, exist_ok=True)
+        name = str(row["classifier_name"])
+        safe_name = "".join(char if char.isalnum() or char in "_-" else "_" for char in name)
+        if row.get("evaluation_split") == "final_test":
+            safe_name += "_final_test"
+        filename = f"{safe_name}_confusion_matrices.png"
+        _save_current_figure(axes[0], output, filename)
+        saved[name] = output / filename
+        print(f"Saved confusion matrices to {saved[name].resolve()}")
+        if pd.notna(row.get("traffic_category_confusion")):
+            breakdown = json.loads(row["traffic_category_confusion"])
+            axis = plot_traffic_category_confusion(breakdown, name, settings, row.get("default_threshold"),
+                                                  evaluation_split=row.get("evaluation_split", "test"))
+            category_filename = f"{safe_name}_traffic_category_confusion_matrices.png"
+            _save_current_figure(axis, output, category_filename)
+            saved[f"{name}_traffic_categories"] = output / category_filename
+            print(f"Saved traffic category matrices to {(output / category_filename).resolve()}")
+        else:
+            print(f"No traffic category counts recorded for {name}; rerun evaluation to add them.")
+    if latest.empty:
+        print("No recorded confusion matrices found in the results CSV.")
+    return saved
+
+
+def plot_traffic_category_confusion(breakdown, classifier_name, settings, default_threshold, evaluation_split="test"):
+    """Actual traffic categories versus binary predictions at both thresholds."""
+    figure, axes = plt.subplots(1, 2, figsize=(13, 7), layout="constrained")
+    titles = [f"Default threshold: {default_threshold}",
+              f"Tuned threshold: {settings['threshold']:.4g}" if settings.get("threshold_tuned") else "Selected: default"]
+    predicted = ["Non-attack (0)" if label == 0 else "Attack (1)" if label == 1 else str(label)
+                 for label in breakdown["predicted_labels"]]
+    for axis, key, title in zip(axes, ("default", "selected"), titles):
+        matrix = np.asarray(breakdown[key])
+        image = _plot_percentage_matrix(axis, matrix)
+        axis.set_xticks(range(len(predicted)), labels=predicted)
+        axis.set_yticks(range(len(breakdown["categories"])), labels=breakdown["categories"])
+        axis.set_xlabel("Predicted binary label")
+        axis.set_ylabel("Actual traffic category")
+        axis.set_title(title)
+    figure.colorbar(image, ax=axes, label="Percentage of actual category (%)", shrink=0.8)
+    figure.suptitle(f"{classifier_name}: {evaluation_split} traffic categories versus binary predictions")
+    return axes[0]
+
+
+def _plot_percentage_matrix(axis, matrix):
+    """Colour by actual-row percentage while annotating raw sample counts."""
+    matrix = np.asarray(matrix)
+    totals = matrix.sum(axis=1, keepdims=True)
+    percentages = np.divide(matrix * 100.0, totals, out=np.zeros_like(matrix, dtype=float), where=totals != 0)
+    image = axis.imshow(percentages, cmap="Blues", vmin=0, vmax=100, aspect="auto")
+    for (i, j), count in np.ndenumerate(matrix):
+        percent = f"{percentages[i, j]:.1f}%" if totals[i, 0] else "n/a"
+        axis.text(j, i, f"{int(count):,}\n({percent})", ha="center", va="center",
+                  color="white" if percentages[i, j] > 50 else "black")
+    return image
+
+
 def create_learning_curve_visualizations(
     results_file_path: Path | str = "evaluation_results.csv",
     figures_path: Path | str = FIGURES_PATH,

@@ -145,10 +145,11 @@ def get_classifiers(
 
 def compare_feature_representations_and_classifiers(
     feature_representations: dict[str, DataSet],
-    exploration_sample_size: int,
+    exploration_sample_size: int | None,
     resampling_strategy: str = "no_resampling",
     model_names: list[str] | None = None,
     model_params: dict[str, dict[str, Any]] | None = None,
+    no_background: list[str] | None = None,
 ) -> list[TrainedClassifier]:
     """
     Evaluate every feature representation with every classifier.
@@ -184,6 +185,7 @@ def compare_feature_representations_and_classifiers(
                     settings={
                         "exploration_sample_size": exploration_sample_size,
                         "resampling_strategy": resampling_strategy,
+                        "no_background": no_background or [],
                         "training_sample_size": int(len(y)),
                         "training_class_counts": _class_counts(y),
                         **classifier_settings,

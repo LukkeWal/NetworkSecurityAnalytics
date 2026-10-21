@@ -18,6 +18,8 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    auc,
+    average_precision_score,
     confusion_matrix,
     f1_score,
     precision_recall_curve,
@@ -37,6 +39,7 @@ def evaluate_classifier(
     validation_split: X_and_Y | None = None,
     test_split: X_and_Y | None = None,
     results_file_path: Path | str = RESULTS_FILE_PATH,
+    evaluation_split: str = "test",
 ) -> dict[str, Any]:
     """
     Tune the decision threshold on validation data and evaluate one trained classifier on test data.
@@ -55,6 +58,21 @@ def evaluate_classifier(
         validation_split,
         minimum_recall=MINIMUM_RECALL_FOR_THRESHOLD,
     )
+    binary = len(trained_classifier.label_encoder.classes_) == 2
+    labels = list(range(len(trained_classifier.label_encoder.classes_)))
+    scores = _get_positive_scores(trained_classifier.model, x_test) if binary else None
+    default_threshold = None
+    if binary and scores is not None:
+        default_threshold = 0.5 if hasattr(trained_classifier.model, "predict_proba") else 0.0
+        default_pred = (scores >= default_threshold).astype(int)
+    else:
+        default_pred = trained_classifier.model.predict(x_test)
+
+    pr_auc = average_precision = None
+    if scores is not None and len(np.unique(y_test)) == 2:
+        pr_precision, pr_recall, _ = precision_recall_curve(y_test, scores, pos_label=1)
+        pr_auc = float(auc(pr_recall, pr_precision))
+        average_precision = float(average_precision_score(y_test, scores, pos_label=1))
 
     if threshold_result["threshold_tuned"]:
         y_pred = _predict_with_threshold(
@@ -63,7 +81,7 @@ def evaluate_classifier(
             threshold_result["threshold"],
         )
     else:
-        y_pred = trained_classifier.model.predict(x_test)
+        y_pred = default_pred
 
     settings = {
         **trained_classifier.settings,
@@ -78,7 +96,7 @@ def evaluate_classifier(
         "classifier_name": trained_classifier.classifier_name,
         "feature_representation_name": trained_classifier.feature_representation_name,
         "settings": json.dumps(settings),
-        "evaluation_split": "test",
+        "evaluation_split": evaluation_split,
         "accuracy": accuracy_score(y_test, y_pred),
         "precision": precision_score(y_test, y_pred, average=average, zero_division=0),
         "recall": recall_score(y_test, y_pred, average=average, zero_division=0),
@@ -96,9 +114,47 @@ def evaluate_classifier(
             if getattr(trained_classifier, "training_curve", None) is not None
             else None
         ),
+        "default_threshold": default_threshold,
+        "default_accuracy": accuracy_score(y_test, default_pred),
+        "default_precision": precision_score(y_test, default_pred, average=average, zero_division=0),
+        "default_recall": recall_score(y_test, default_pred, average=average, zero_division=0),
+        "default_f1": f1_score(y_test, default_pred, average=average, zero_division=0),
+        "default_false_positive_rate": _false_positive_rate(y_test, default_pred, labels=labels),
+        "pr_auc": pr_auc,
+        "average_precision": average_precision,
+        "class_labels": json.dumps(trained_classifier.label_encoder.classes_.tolist()),
+        "confusion_matrix": json.dumps(confusion_matrix(y_test, y_pred, labels=labels).tolist()),
+        "default_confusion_matrix": json.dumps(confusion_matrix(y_test, default_pred, labels=labels).tolist()),
+        "traffic_category_confusion": None,
     }
+    if binary and "traffic_category" in test_split.x.columns:
+        categories = test_split.x["traffic_category"].astype("string").fillna("Unknown")
+        names = sorted(categories.unique().tolist())
+        counts = lambda predictions: [
+            [int(np.sum((categories.to_numpy() == name) & (predictions == label))) for label in labels]
+            for name in names
+        ]
+        metrics["traffic_category_confusion"] = json.dumps({
+            "categories": names,
+            "predicted_labels": trained_classifier.label_encoder.classes_.tolist(),
+            "default": counts(default_pred),
+            "selected": counts(y_pred),
+        })
 
     _append_results(metrics, Path(results_file_path))
+    print(f"\n{evaluation_split} evaluation: {trained_classifier.classifier_name}/{trained_classifier.feature_representation_name}")
+    comparison = pd.DataFrame([
+        {"threshold": default_threshold, **{key: metrics[f"default_{key}"] for key in
+         ("accuracy", "precision", "recall", "f1", "false_positive_rate")}},
+        {"threshold": threshold_result["threshold"], **{key: metrics[key] for key in
+         ("accuracy", "precision", "recall", "f1", "false_positive_rate")}},
+    ], index=["default", "tuned" if threshold_result["threshold_tuned"] else "selected (default)"])
+    print(comparison.to_string(float_format=lambda value: f"{value:.4f}"))
+    if pr_auc is not None:
+        print(f"{evaluation_split} PR-AUC (trapezoidal): {pr_auc:.4f}; average precision: {average_precision:.4f}")
+    print(f"Confusion matrices (rows=true, columns=predicted; labels={metrics['class_labels']}):")
+    print(f"  default: {metrics['default_confusion_matrix']}")
+    print(f"  selected: {metrics['confusion_matrix']}")
     return metrics
 
 
@@ -196,12 +252,14 @@ def _f1_from_precision_recall(precision: float, recall: float) -> float:
 def evaluate_classifiers(
     trained_classifiers: list[Any],
     results_file_path: Path | str = RESULTS_FILE_PATH,
+    evaluation_split: str = "test",
 ) -> pd.DataFrame:
     """Evaluate multiple trained classifiers and append every result to the CSV file."""
     results = [
         evaluate_classifier(
             trained_classifier,
             results_file_path=results_file_path,
+            evaluation_split=evaluation_split,
         )
         for trained_classifier in trained_classifiers
     ]

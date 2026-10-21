@@ -1,80 +1,45 @@
-Insert the data under:
-`data/ALLFLOWMETER_HIKARI2021.csv`
+﻿# Network Security Analytics CLI
 
-Run from the project directory with the virtual environment activated:
+Run commands from the project directory. Install dependencies with `python -m pip install -r requirements.txt`.
 
 ```powershell
+# Create reproducible train/val/development/test CSVs (60/10/20/10).
+python main.py --init
+
+# Train and evaluate a selected configuration.
+python main.py --model xgboost --feature raw_numeric --resampling no_resampling
+
+# Quick experiment using 10,000 rows from the training pool.
+python main.py --model xgboost --feature raw_numeric --resampling no_resampling --sample-size 10000
+
+# Plot results already saved in the results CSV.
+python main.py --learning-curves --confusion-matrices
+
+# Evaluate a chosen configuration on the reserved final holdout.
+python main.py --model xgboost --feature raw_numeric --resampling no_resampling --final-evaluation
+
+# Show all options and supported model/feature names.
 python main.py --help
 ```
 
-With no flags, the pipeline runs all models, feature representations and resampling
-strategies, using a total sample size of 10000 across train/validation/test.
-Exploration reports and plots are disabled unless `--exploration` or
-`--learning-curves` is supplied.
+With no flags, all models, feature representations, and resampling strategies run on the full saved development splits. Visualization flags alone do not train models; add `--model` to train and plot together.
 
-Without `--model`/`--models`, visualization flags run only the requested
-visualizations and do not train or evaluate models. For example, plot the latest
-recorded XGBoost and random forest runs without loading the dataset:
-
-```powershell
-python main.py --learning-curves
-```
-
-Use `--exploration` alone for dataset exploration, or combine both visualization
-flags. To train and then plot, supply models explicitly, for example
-`python main.py --model xgboost --feature raw_numeric --resampling no_resampling --learning-curves`.
-
-Run just XGBoost on raw numeric features without resampling or exploration plots:
-
-```powershell
-python main.py --model xgboost --feature raw_numeric --sample-size 10000 --resampling no_resampling
-```
-
-Run both ensembles with custom settings (PowerShell):
-
-```powershell
-$modelParams = '{"xgboost":{"n_estimators":300,"max_depth":4,"learning_rate":0.05},"random_forest":{"n_estimators":300,"max_depth":12,"min_samples_leaf":5,"n_jobs":-1}}'
-python main.py --models xgboost random_forest --features raw_numeric pca_95 --resampling no_resampling --model-params $modelParams
-```
-
-On Windows PowerShell 5.1, if JSON quotes are stripped when passing arguments to
-Python, use `--model-params ($modelParams.Replace('"', '\"'))` instead.
-
-| Flag | Purpose |
+| Option | Purpose |
 | --- | --- |
-| `--models` / `--model` | One or more classifier names; default all available models |
-| `--features` / `--feature` | One or more feature representations; default all |
-| `--sample-size` / `--exploration-sample-size` | Positive total sample size; default 10000; capped at available data |
-| `--resampling` | One or more of `no_resampling`, `undersample_majority`, `oversample_minority`; default all |
-| `--model-params` | JSON object mapping selected model names to estimator parameters |
-| `--early-stopping-rounds` | XGBoost validation log-loss patience; default 20; use 0 to disable |
-| `--data` | Input CSV path; default `data/ALLFLOWMETER_HIKARI2021.csv` |
-| `--results` | CSV to append results to; default `evaluation_results.csv` |
-| `--figures` | Exploration and learning curve output directory; default `figures` |
-| `--exploration` | Enable exploration reports and plots, including t-SNE; default disabled |
-| `--learning-curves` | Enable learning curve plots; default disabled; losses are always recorded |
+| `--models` / `--model` | Select one or more classifiers. |
+| `--features` / `--feature` | Select representations such as `raw_numeric`, `pca`, or `pca_95`. |
+| `--resampling` | Choose `no_resampling`, `undersample_majority`, or `oversample_minority`. |
+| `--sample-size N` | Sample the training pool, then split it 60/10/20/10; the last 10% is withheld. |
+| `--no-background [SPLIT ...]` | Remove Background rows from `train`, `val`, `test`, or `final_test`; flag alone selects all loaded splits. |
+| `--model-params JSON` | Set model parameters by model name; pipeline parameters use `classifier__PARAM`. |
+| `--early-stopping-rounds N` | XGBoost patience (default 20; 0 disables). |
+| `--data PATH` | Source CSV for `--init` (default `data/ALLFLOWMETER_HIKARI2021.csv`). |
+| `--splits-dir PATH` | Saved split directory (default `data/splits`). |
+| `--results PATH` | Results CSV (default `evaluation_results.csv`). |
+| `--figures PATH` | Plot directory (default `figures`). |
+| `--exploration` | Generate dataset reports and exploration plots. |
+| `--learning-curves` / `--confusion-matrices` | Generate the requested plots. |
 
-Each selected model runs for every selected representation and resampling strategy.
-Unselected transformations are skipped. Sample size is applied before resampling.
-Model hyperparameters are saved in the CSV's `settings.model_params` field.
-The weighted XGBoost variant `xgboost_scale_pos_weight` requires binary labels.
-For pipeline models (`svm`, `svm_balanced`, `knn`, `mlp`), use parameter names
-such as `classifier__C` or `classifier__hidden_layer_sizes`.
+`--init` writes the split CSVs and exits; rerunning overwrites them. Normal runs use train.csv/val.csv/development.csv. `--final-evaluation` requires explicit models, disallows sampling and exploration, and uses `test.csv`, writing to `final_evaluation_results.csv` by default. Reserve it for your final chosen settings.
 
-Run CLI checks with `python -m unittest test_cli`.
-
-XGBoost (including its weighted variant) uses early stopping by default: fitting
-stops after 20 consecutive rounds without a new best validation log loss, or at
-the `n_estimators` limit (100 by default). Threshold tuning and test predictions
-automatically use the best iteration. The test split is not used for stopping.
-Per-model `early_stopping_rounds` in `--model-params` overrides the CLI patience;
-use JSON `null` to disable it for an individual model.
-
-The CSV settings record `best_boosting_round` (starting at 1),
-`best_validation_log_loss`, and `boosting_rounds_trained` when stopping is enabled.
-The training curve includes all rounds actually fitted, including the patience
-rounds after the best round. Random forest training is unaffected.
-
-```powershell
-python main.py --model xgboost --feature raw_numeric --resampling no_resampling --sample-size 100000 --early-stopping-rounds 20 --learning-curves
-```
+Only CSV filenames have changed. Internal split roles and `--no-background` selectors remain unchanged: `test` selects development.csv and `final_test` selects the reserved test.csv.

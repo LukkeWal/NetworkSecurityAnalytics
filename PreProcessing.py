@@ -159,7 +159,7 @@ def get_all_feature_representations(
 ) -> dict[str, DataSet]:
     start_time = perf_counter()
     features = {
-        "raw_numeric": _get_clean_numeric_feature_dataset(data),
+        "raw_numeric": _attach_traffic_categories(_get_clean_numeric_feature_dataset(data), data),
     } if selected is None or "raw_numeric" in selected else {}
     print(f"[timing] feature representation raw_numeric: {perf_counter() - start_time:.2f}s")
 
@@ -212,8 +212,19 @@ def get_all_feature_representations(
             label_encoder=data.test.label_encoder,
         )
         result = DataSet(train=train, val=val, test=test)
-        features[reducer_name] = result
+        features[reducer_name] = _attach_traffic_categories(result, data)
         print(f"[timing] feature representation {reducer_name}: {perf_counter() - start_time:.2f}s")
+    return features
+
+
+def _attach_traffic_categories(features: DataSet, source: DataSet) -> DataSet:
+    """Retain string categories for evaluation; numeric model inputs exclude them."""
+    for name in ("train", "val", "test"):
+        original = getattr(source, name).x
+        if ATTACK_TYPE_COLUMN in original.columns:
+            getattr(features, name).x[ATTACK_TYPE_COLUMN] = (
+                original[ATTACK_TYPE_COLUMN].astype("string").to_numpy()
+            )
     return features
 
 
