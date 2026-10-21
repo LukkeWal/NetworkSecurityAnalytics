@@ -77,10 +77,10 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Train and evaluate selected network traffic classifiers.")
     parser.add_argument("--models", "--model", nargs="+", choices=MODEL_NAMES,
                         help="Models to train. With visualization flags alone, no models are trained; with no flags, runs all models.")
-    parser.add_argument("--features", "--feature", nargs="+", choices=FEATURE_NAMES,
+    parser.add_argument("--features", nargs="+", choices=FEATURE_NAMES,
                         help="Feature representations (default: all).")
     parser.add_argument("--sample-size", "--exploration-sample-size", type=int,
-                        default=EXPLORATION_SAMPLE_SIZE, help="Sample rows from train.csv and split 60/10/20/10 (last 10% withheld); omit to use fixed development splits.")
+                        default=EXPLORATION_SAMPLE_SIZE, help="Sample rows from train.csv and split 60/10/20/10 (last 10%% withheld); omit to use fixed development splits.")
     parser.add_argument("--resampling", nargs="+",
                         choices=["no_resampling", "undersample_majority", "oversample_minority"],
                         help="Resampling strategies (default: all).")
@@ -92,12 +92,7 @@ def parse_args(argv=None):
     parser.add_argument("--final-evaluation", action="store_true",
                         help="Explicitly evaluate selected models on reserved test.csv; no sampling or exploration.")
     parser.add_argument("--no-background", nargs="*", metavar="SPLIT",
-                        help="Exclude Background from selected splits: train val test final_test (spaces/commas accepted); flag alone means all loaded splits.")
-    parser.add_argument("--data", type=Path, help="Source CSV for --init only (default: project dataset).")
-    parser.add_argument("--splits-dir", type=Path, default=DataHandler.SPLITS_PATH,
-                        help="Fixed train/val/development/test CSV directory (default: data/splits).")
-    parser.add_argument("--results", type=Path, help="Results CSV (default: evaluation_results.csv, or final_evaluation_results.csv with --final-evaluation).")
-    parser.add_argument("--figures", type=Path, default=Visualization.FIGURES_PATH, help="Plot output directory.")
+                        help="Exclude Background from selected splits: train val dev test (spaces/commas accepted); flag alone means all loaded splits.")
     parser.add_argument("--exploration", action="store_true", help="Enable dataset exploration reports and plots (default: disabled).")
     parser.add_argument("--learning-curves", action="store_true", help="Enable learning curve plots (losses are always recorded).")
     parser.add_argument("--confusion-matrices", action="store_true",
@@ -111,14 +106,11 @@ def parse_args(argv=None):
         selected = [part.strip() for value in args.no_background for part in value.split(",") if part.strip()]
         invalid = set(selected) - set(DataHandler.SPLIT_NAMES)
         if invalid or not selected:
-            parser.error("--no-background accepts train, val, test, final_test (or all)")
+            parser.error("--no-background accepts train, val, dev, test (or all)")
         args.no_background = list(dict.fromkeys(selected))
     if args.final_evaluation and (args.init or args.sample_size is not None or args.exploration or args.models is None):
         parser.error("--final-evaluation requires explicit --model(s) and cannot combine with --init, --sample-size, or --exploration")
-    if args.results is None:
-        args.results = Path("final_evaluation_results.csv") if args.final_evaluation else Evaluate.RESULTS_FILE_PATH
-    if args.data is not None and not args.init:
-        parser.error("--data is only used with --init; use --splits-dir to select initialized data")
+    args.results = Path("final_evaluation_results.csv") if args.final_evaluation else Evaluate.RESULTS_FILE_PATH
     if args.sample_size is not None and args.sample_size <= 0:
         parser.error("--sample-size must be positive")
     if args.early_stopping_rounds < 0:
@@ -154,19 +146,19 @@ def main(argv=None) -> None:
     """Outline of the tasks this pipeline performs"""
     args = parse_args(argv)
     if args.init:
-        DataHandler.initialize_splits(args.data or DataHandler.DATA_FILE_PATH, args.splits_dir)
+        DataHandler.initialize_splits(DataHandler.DATA_FILE_PATH, DataHandler.SPLITS_PATH)
         return
     visualization_only = args.models is None and (args.exploration or args.learning_curves or args.confusion_matrices)
     if visualization_only and not args.exploration:
         if args.learning_curves:
-            Visualization.create_learning_curve_visualizations(args.results, args.figures)
+            Visualization.create_learning_curve_visualizations(args.results, Visualization.FIGURES_PATH)
         if args.confusion_matrices:
-            Visualization.create_confusion_matrix_visualizations(args.results, args.figures)
+            Visualization.create_confusion_matrix_visualizations(args.results, Visualization.FIGURES_PATH)
         return
     # read data
     try:
         dataset = DataHandler.load_training_sample(
-            args.sample_size, args.splits_dir, no_background=args.no_background,
+            args.sample_size, DataHandler.SPLITS_PATH, no_background=args.no_background,
             final_evaluation=args.final_evaluation,
         )
     except (FileNotFoundError, ValueError) as error:
@@ -179,8 +171,8 @@ def main(argv=None) -> None:
 
     # visualize and explore data
     if args.exploration:
-        args.figures.mkdir(parents=True, exist_ok=True)
-        explore_data(dataset, preprocessed_data, preprocessed_data, args.figures)
+        Visualization.FIGURES_PATH.mkdir(parents=True, exist_ok=True)
+        explore_data(dataset, preprocessed_data, preprocessed_data, Visualization.FIGURES_PATH)
     # train combining feature representations and classifiers
     if not visualization_only:
         trained_models = blanket_search(
@@ -192,9 +184,9 @@ def main(argv=None) -> None:
             evaluation_split="final_test" if args.final_evaluation else "test",
         )
     if args.learning_curves:
-        Visualization.create_learning_curve_visualizations(args.results, args.figures)
+        Visualization.create_learning_curve_visualizations(args.results, Visualization.FIGURES_PATH)
     if args.confusion_matrices:
-        Visualization.create_confusion_matrix_visualizations(args.results, args.figures)
+        Visualization.create_confusion_matrix_visualizations(args.results, Visualization.FIGURES_PATH)
 
 
 if __name__ == "__main__":

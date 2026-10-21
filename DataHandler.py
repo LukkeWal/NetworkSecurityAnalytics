@@ -17,9 +17,8 @@ TRAIN_SIZE = 0.60
 VALIDATION_SIZE = 0.10
 TEST_SIZE = 0.20
 FINAL_TEST_SIZE = 0.10
-SPLIT_NAMES = ("train", "val", "test", "final_test")
-# Keep pipeline split roles unchanged while using the requested CSV filenames.
-SPLIT_FILENAMES = dict(train="train.csv", val="val.csv", test="development.csv", final_test="test.csv")
+SPLIT_NAMES = ("train", "val", "dev", "test")
+SPLIT_FILENAMES = {name: f"{name}.csv" for name in SPLIT_NAMES}
 RANDOM_STATE = 42
 
 
@@ -84,7 +83,7 @@ def load_training_sample(
     if missing:
         raise FileNotFoundError(
             f"Missing initialized splits: {', '.join(missing)}. "
-            "Run main.py --init (with the same --splits-dir) first."
+            "Run main.py --init first."
         )
     if final_evaluation and sample_size is not None:
         raise ValueError("--final-evaluation cannot be combined with --sample-size")
@@ -124,7 +123,7 @@ def load_training_sample(
             raise ValueError(f"Unknown --no-background splits: {sorted(unknown)}")
         loaded = {"train": dataset.train, "val": dataset.val, "test": dataset.test}
         for field, split in loaded.items():
-            split_name = "final_test" if field == "test" and final_evaluation else field
+            split_name = ("test" if final_evaluation else "dev") if field == "test" else field
             if split_name not in no_background:
                 continue
             if "traffic_category" not in split.x.columns:
@@ -146,7 +145,7 @@ def load_training_sample(
         (f"Sampled {sample_size:,} of {len(train):,} fixed training rows: "
          if sample_size is not None else "Loaded full fixed splits: ") +
         f"train={len(dataset.train.y):,}, val={len(dataset.val.y):,}, "
-        f"{'final_test' if final_evaluation else 'test'}={len(dataset.test.y):,}"
+        f"{'test' if final_evaluation else 'dev'}={len(dataset.test.y):,}"
     )
     return dataset
 
@@ -165,7 +164,7 @@ def _get_stratified_frames(data: pd.DataFrame) -> dict[str, pd.DataFrame]:
         remaining, train_size=round(len(data) * TEST_SIZE),
         random_state=RANDOM_STATE, stratify=remaining[TARGET_COLUMN],
     )
-    return dict(train=train, val=val, test=test, final_test=final_test)
+    return dict(train=train, val=val, dev=test, test=final_test)
 
 
 def get_stratified_split(data: pd.DataFrame) -> DataSet:
@@ -173,8 +172,8 @@ def get_stratified_split(data: pd.DataFrame) -> DataSet:
     frames = _get_stratified_frames(data)
     encoder = LabelEncoder().fit(frames["train"][TARGET_COLUMN])
     return DataSet(**{
-        name: _split_features_and_labels(frames[name], encoder)
-        for name in ("train", "val", "test")
+        field: _split_features_and_labels(frames[name], encoder)
+        for field, name in (("train", "train"), ("val", "val"), ("test", "dev"))
     })
 
 
