@@ -19,3 +19,20 @@ flows of the run folders and compares them with Suricata; results go to `integra
 
 On the test flows of the six pcaps the model flags 7,333 of 7,360 attacks and Suricata none: the attacks are TLS to port 443,
 so the rules have no content to match. `check_duplicates.py` lists attack flows that also appear as Benign with identical features.
+
+## TLS inspection lab
+
+`tls-inspection-lab/` generates WordPress brute-force and scan traffic behind an nginx TLS terminator and records both the
+encrypted side and the plain HTTP hop behind it, to compare Suricata and the model on the same attacks encrypted and decrypted.
+It reuses the modules in this directory.
+
+From the repository root, once:
+
+```bash
+python integration/fetch_hikari.py --csv-only
+python integrate.py train
+integration/setup.sh
+pip install scapy
+```
+
+Then see `tls-inspection-lab/README.md` (needs Docker).

@@ -13,3 +13,5 @@ integration_results/flows_scored.csv
 integration_results_cic/flows_scored.csv
 integration_results_cic/flows_labelled.pkl
 evaluation_results.csv
+tls-inspection-lab/certs/*.key
+tls-inspection-lab/certs/*.crt*
