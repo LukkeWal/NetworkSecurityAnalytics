@@ -1,0 +1,4 @@
+suricata_false_alerts,110
+false_alerts_removed,110
+suricata_true_alerts,0
+true_alerts_lost,0
