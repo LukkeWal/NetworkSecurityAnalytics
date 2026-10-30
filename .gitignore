@@ -15,3 +15,4 @@ integration_results_cic/flows_labelled.pkl
 evaluation_results.csv
 tls-inspection-lab/certs/*.key
 tls-inspection-lab/certs/*.crt*
+demo/run/

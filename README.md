@@ -30,3 +30,7 @@ After training evaluation, statistics and results are automatically saved. These
 Again use the help page to view which visualizations and settings are available. 
 
 `python Visualization.py --help`
+## Suricata integration and demo
+
+See `integration/README.md` for the HIKARI-2021 and CSE-CIC-IDS2018 comparisons, `tls-inspection-lab/README.md` for the TLS lab
+and `demo/README.md` for a short demo that replays recorded captures.
