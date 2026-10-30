@@ -1,0 +1,5 @@
+split,flows,precision,recall,false_positive_rate
+"random split, all flows",142856,0.9998266897746967,0.9476018396846255,4.447607187333215e-05
+"random split, victim captures only",44706,1.0,0.960742444152431,0.0
+"time-block split, all flows",142856,1.0,0.943467543138866,0.0
+"time-block split, victim captures only",44706,1.0,0.9097781429745275,0.0
