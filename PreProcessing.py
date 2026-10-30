@@ -8,6 +8,8 @@ We will:
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
+from threading import Event, Thread
 from time import perf_counter
 
 import numpy as np
@@ -24,6 +26,8 @@ from DataHandler import DataSet, X_and_Y
 TARGET_COLUMN = "Label"
 ATTACK_TYPE_COLUMN = "traffic_category"
 RANDOM_STATE = 42
+UMAP_INIT = "random"
+UMAP_RANDOM_STATE = RANDOM_STATE
 
 
 def preprocess_data(data: DataSet) -> DataSet:
@@ -154,20 +158,44 @@ def minority_class_oversampling(
     )
 
 
+@contextmanager
+def _feature_step(description: str, heartbeat_seconds: float = 30):
+    """Report long operations without changing their computation."""
+    started = perf_counter()
+    stopped = Event()
+    print(f"[features] preprocessing {description}", flush=True)
+
+    def heartbeat():
+        while not stopped.wait(heartbeat_seconds):
+            print(f"[features] still working on {description}: {perf_counter() - started:.0f}s elapsed", flush=True)
+
+    reporter = Thread(target=heartbeat, daemon=True)
+    reporter.start()
+    try:
+        yield
+    except BaseException:
+        stopped.set()
+        reporter.join()
+        print(f"[features] interrupted/failed {description}: {perf_counter() - started:.2f}s", flush=True)
+        raise
+    else:
+        stopped.set()
+        reporter.join()
+
+
 def get_all_feature_representations(
     data: DataSet, selected: list[str] | None = None,
+    evaluation_split_name: str = "evaluation", report_progress: bool = True,
 ) -> dict[str, DataSet]:
-    start_time = perf_counter()
-    features = {
-        "raw_numeric": _attach_traffic_categories(_get_clean_numeric_feature_dataset(data), data),
-    } if selected is None or "raw_numeric" in selected else {}
-    print(f"[timing] feature representation raw_numeric: {perf_counter() - start_time:.2f}s")
-
-    start_time = perf_counter()
+    step = _feature_step if report_progress else lambda description: nullcontext()
+    features = {}
+    if selected is None or "raw_numeric" in selected:
+        with step(f"raw_numeric: preparing train/val/{evaluation_split_name}"):
+            features["raw_numeric"] = _attach_traffic_categories(_get_clean_numeric_feature_dataset(data), data)
     if selected == ["raw_numeric"]:
         return features
-    scaled = _get_scaled_feature_splits(data)
-    print(f"[timing] feature scaling: {perf_counter() - start_time:.2f}s")
+    with step(f"scaling: fit train ({len(data.train.y):,} rows), transform val/{evaluation_split_name}"):
+        scaled = _get_scaled_feature_splits(data)
     labels = data.train.label_encoder.transform(data.train.y)
 
     reducers = {
@@ -178,42 +206,47 @@ def get_all_feature_representations(
     for n_components in (5, 10, 20):
         reducers[f"umap_{n_components}"] = umap.UMAP(
             n_components=n_components,
-            random_state=RANDOM_STATE,
+            random_state=UMAP_RANDOM_STATE,
+            init=UMAP_INIT,
+            verbose=False,
         )
         reducers[f"umap_supervised_{n_components}"] = umap.UMAP(
             n_components=n_components,
-            random_state=RANDOM_STATE,
+            random_state=UMAP_RANDOM_STATE,
+            init=UMAP_INIT,
+            verbose=False,
         )
 
     for reducer_name, reducer in reducers.items():
         if selected is not None and reducer_name not in selected:
             continue
-        start_time = perf_counter()
-        if reducer_name.startswith("umap_supervised"):
-            train_components = reducer.fit_transform(
-                scaled["train"], y=labels
-            )
-        else:
-            train_components = reducer.fit_transform(scaled["train"])
+        with step(f"{reducer_name}: fit/transform train ({len(data.train.y):,} rows)"):
+            if reducer_name.startswith("umap_supervised"):
+                train_components = reducer.fit_transform(scaled["train"], y=labels)
+            else:
+                train_components = reducer.fit_transform(scaled["train"])
 
         train = X_and_Y(
             x=_build_component_data_frame(train_components, reducer_name, data.train.x),
             y=data.train.y,
             label_encoder=data.train.label_encoder,
         )
+        with step(f"{reducer_name}: transform val ({len(data.val.y):,} rows)"):
+            val_components = reducer.transform(scaled["val"])
         val = X_and_Y(
-            x=_build_component_data_frame(reducer.transform(scaled["val"]), reducer_name, data.val.x),
+            x=_build_component_data_frame(val_components, reducer_name, data.val.x),
             y=data.val.y,
             label_encoder=data.val.label_encoder,
         )
+        with step(f"{reducer_name}: transform {evaluation_split_name} ({len(data.test.y):,} rows)"):
+            test_components = reducer.transform(scaled["test"])
         test = X_and_Y(
-            x=_build_component_data_frame(reducer.transform(scaled["test"]), reducer_name, data.test.x),
+            x=_build_component_data_frame(test_components, reducer_name, data.test.x),
             y=data.test.y,
             label_encoder=data.test.label_encoder,
         )
         result = DataSet(train=train, val=val, test=test)
         features[reducer_name] = _attach_traffic_categories(result, data)
-        print(f"[timing] feature representation {reducer_name}: {perf_counter() - start_time:.2f}s")
     return features
 
 

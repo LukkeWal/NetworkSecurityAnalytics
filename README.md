@@ -1,43 +1,32 @@
 ﻿# Network Security Analytics CLI
 
-Run commands from the project directory. Install dependencies with `python -m pip install -r requirements.txt`.
+## Setup
+Place the HIKARI-2021 data at `data/ALLFLOWMETER_HIKARI2021.csv`
 
-```powershell
-# Create reproducible train/val/dev/test CSVs (60/10/20/10).
-python main.py --init
+Run commands from the project directory. Install dependencies with 
 
-# Train and evaluate a selected configuration.
-python main.py --model xgboost --features raw_numeric --resampling no_resampling
+`python -m pip install -r requirements.txt`.
 
-# Quick experiment using 10,000 rows from the training pool.
-python main.py --model xgboost --features raw_numeric --resampling no_resampling --sample-size 10000
+Create our reproducible train/val/dev/test split
 
-# Plot results already saved in the results CSV.
-python main.py --learning-curves --confusion-matrices
+`python main.py --init`
 
-# Evaluate a chosen configuration on the reserved final holdout.
-python main.py --model xgboost --features raw_numeric --resampling no_resampling --final-evaluation
+## Train a model
+`main.py` is the entry point for model training. Use the help command to view all available settings for model training
 
-# Show all options and supported model/feature names.
-python main.py --help
-```
+`python main.py --help`
 
-With no flags, all models, feature representations, and resampling strategies run on the full saved development splits. Visualization flags alone do not train models; add `--model` to train and plot together.
+### Results
+After training a model it is evaluated and the results, as well as additional statistics from training, are saved in a
+CSV file.
 
-| Option | Purpose |
-| --- | --- |
-| `--models` / `--model` | Select one or more classifiers. |
-| `--features` | Select representations such as `raw_numeric`, `pca`, or `pca_95`. |
-| `--resampling` | Choose `no_resampling`, `undersample_majority`, or `oversample_minority`. |
-| `--sample-size N` | Sample the training pool, then split it 60/10/20/10; the last 10% is withheld. |
-| `--no-background [SPLIT ...]` | Remove Background rows from `train`, `val`, `dev`, or `test`; flag alone selects all loaded splits. |
-| `--model-params JSON` | Set model parameters by model name; pipeline parameters use `classifier__PARAM`. |
-| `--early-stopping-rounds N` | XGBoost patience (default 20; 0 disables). |
-| `--exploration` | Generate dataset reports and exploration plots. |
-| `--learning-curves` / `--confusion-matrices` | Generate the requested plots. |
+### Train our best model
+To train and run our best performing model use:
 
-`--init` writes the split CSVs and exits; rerunning overwrites them. Normal runs use train.csv/val.csv/dev.csv. `--final-evaluation` requires explicit models, disallows sampling and exploration, and uses `test.csv`, writing to `final_evaluation_results.csv` by default. Reserve it for your final chosen settings.
+`python --% main.py --model xgboost --features raw_numeric --resampling no_resampling --early-stopping-rounds 20 --no-background train --model-params "{\"xgboost\":{\"max_depth\":6,\"min_child_weight\":5,\"learning_rate\":0.3,\"subsample\":1.0,\"colsample_bytree\":1.0}}"`
 
-`--no-background` selectors match CSV filenames: `dev` selects dev.csv and `test` selects the reserved test.csv. Normal runs do not load the reserved test set.
+## Visualize results
+After training evaluation, statistics and results are automatically saved. These can be visualized by `Visualization.py`
+Again use the help page to view which visualizations and settings are available. 
 
-Paths are fixed: source `data/ALLFLOWMETER_HIKARI2021.csv`, splits `data/splits`, results `evaluation_results.csv` (or `final_evaluation_results.csv` for final evaluation), and plots `figures`.
+`python Visualization.py --help`

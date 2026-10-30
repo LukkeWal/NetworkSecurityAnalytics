@@ -25,12 +25,14 @@ from sklearn.metrics import (
     precision_recall_curve,
     precision_score,
     recall_score,
+    roc_curve,
 )
 
 from DataHandler import X_and_Y
 
 
-RESULTS_FILE_PATH = Path("evaluation_results.csv")
+RESULTS_FILE_PATH = Path("results/binary_results.csv")
+CLASSIFICATION_RESULTS_FILE_PATH = Path("results/classification_results.csv")
 MINIMUM_RECALL_FOR_THRESHOLD = 0.95
 
 
@@ -69,16 +71,26 @@ def evaluate_classifier(
         default_pred = trained_classifier.model.predict(x_test)
 
     pr_auc = average_precision = None
+    recorded_roc_curve = None
+    recorded_pr_curve = None
+    roc_auc = None
     if scores is not None and len(np.unique(y_test)) == 2:
         pr_precision, pr_recall, _ = precision_recall_curve(y_test, scores, pos_label=1)
         pr_auc = float(auc(pr_recall, pr_precision))
+        recorded_pr_curve = json.dumps({
+            "precision": pr_precision.tolist(), "recall": pr_recall.tolist(),
+        }, allow_nan=False)
         average_precision = float(average_precision_score(y_test, scores, pos_label=1))
+        fpr, tpr, _ = roc_curve(y_test, scores, pos_label=1)
+        roc_auc = float(auc(fpr, tpr))
+        recorded_roc_curve = json.dumps({"fpr": fpr.tolist(), "tpr": tpr.tolist()}, allow_nan=False)
 
     if threshold_result["threshold_tuned"]:
         y_pred = _predict_with_threshold(
             trained_classifier.model,
             x_test,
             threshold_result["threshold"],
+            benign_class_index=threshold_result.get("benign_class_index"),
         )
     else:
         y_pred = default_pred
@@ -87,7 +99,8 @@ def evaluate_classifier(
         **trained_classifier.settings,
         "threshold_tuned": threshold_result["threshold_tuned"],
         "threshold": threshold_result["threshold"],
-        "threshold_selection_metric": f"max_precision_at_recall_at_least_{MINIMUM_RECALL_FOR_THRESHOLD}",
+        "benign_class_index": threshold_result.get("benign_class_index"),
+        "threshold_selection_metric": (f"max_precision_at_recall_at_least_{MINIMUM_RECALL_FOR_THRESHOLD}" if binary else f"max_attack_precision_at_attack_recall_at_least_{MINIMUM_RECALL_FOR_THRESHOLD}"),
     }
 
     average = "binary" if len(trained_classifier.label_encoder.classes_) == 2 else "macro"
@@ -121,6 +134,9 @@ def evaluate_classifier(
         "default_f1": f1_score(y_test, default_pred, average=average, zero_division=0),
         "default_false_positive_rate": _false_positive_rate(y_test, default_pred, labels=labels),
         "pr_auc": pr_auc,
+        "precision_recall_curve": recorded_pr_curve,
+        "roc_auc": roc_auc,
+        "roc_curve": recorded_roc_curve,
         "average_precision": average_precision,
         "class_labels": json.dumps(trained_classifier.label_encoder.classes_.tolist()),
         "confusion_matrix": json.dumps(confusion_matrix(y_test, y_pred, labels=labels).tolist()),
@@ -142,19 +158,6 @@ def evaluate_classifier(
         })
 
     _append_results(metrics, Path(results_file_path))
-    print(f"\n{evaluation_split} evaluation: {trained_classifier.classifier_name}/{trained_classifier.feature_representation_name}")
-    comparison = pd.DataFrame([
-        {"threshold": default_threshold, **{key: metrics[f"default_{key}"] for key in
-         ("accuracy", "precision", "recall", "f1", "false_positive_rate")}},
-        {"threshold": threshold_result["threshold"], **{key: metrics[key] for key in
-         ("accuracy", "precision", "recall", "f1", "false_positive_rate")}},
-    ], index=["default", "tuned" if threshold_result["threshold_tuned"] else "selected (default)"])
-    print(comparison.to_string(float_format=lambda value: f"{value:.4f}"))
-    if pr_auc is not None:
-        print(f"{evaluation_split} PR-AUC (trapezoidal): {pr_auc:.4f}; average precision: {average_precision:.4f}")
-    print(f"Confusion matrices (rows=true, columns=predicted; labels={metrics['class_labels']}):")
-    print(f"  default: {metrics['default_confusion_matrix']}")
-    print(f"  selected: {metrics['confusion_matrix']}")
     return metrics
 
 
@@ -166,7 +169,7 @@ def _tune_threshold_for_precision_at_minimum_recall(
     x_validation = validation_split.x.select_dtypes(include="number")
     y_true = trained_classifier.label_encoder.transform(validation_split.y)
     if len(trained_classifier.label_encoder.classes_) != 2:
-        return _untuned_threshold_result()
+        return _tune_multiclass_thresholds(trained_classifier, x_validation, y_true, minimum_recall)
 
     scores = _get_positive_scores(trained_classifier.model, x_validation)
     if scores is None:
@@ -201,6 +204,55 @@ def _tune_threshold_for_precision_at_minimum_recall(
     }
 
 
+def _get_multiclass_scores(model: Any, x: pd.DataFrame) -> np.ndarray:
+    """Return scores in encoded label order, including SVM one-vs-rest margins."""
+    if hasattr(model, "predict_proba"):
+        scores = np.asarray(model.predict_proba(x))
+    elif hasattr(model, "decision_function"):
+        scores = np.asarray(model.decision_function(x))
+    else:
+        raise ValueError("Threshold tuning requires predict_proba or decision_function")
+    classes = np.asarray(model.classes_)
+    if scores.ndim != 2 or scores.shape[1] != len(classes):
+        raise ValueError("Multiclass threshold tuning requires one score per class")
+    return scores[:, np.argsort(classes)]
+
+
+def _multiclass_attack_scores(model, x, benign_class_index):
+    scores = _get_multiclass_scores(model, x)
+    attack_indices = np.delete(np.arange(scores.shape[1]), benign_class_index)
+    if hasattr(model, "predict_proba"):
+        attack_scores = scores[:, attack_indices].sum(axis=1)
+    else:
+        attack_scores = scores[:, attack_indices].max(axis=1) - scores[:, benign_class_index]
+    attack_labels = attack_indices[np.argmax(scores[:, attack_indices], axis=1)]
+    return attack_scores, attack_labels
+
+
+def _tune_multiclass_thresholds(trained_classifier, x, y_true, minimum_recall):
+    """Tune aggregate attack detection, retaining the highest-scoring attack subtype."""
+    classes = trained_classifier.label_encoder.classes_
+    matches = np.flatnonzero(classes == "Benign")
+    if len(matches) != 1:
+        raise ValueError("Multiclass attack threshold tuning requires a Benign class")
+    benign_index = int(matches[0])
+    target = (y_true != benign_index).astype(int)
+    if len(np.unique(target)) != 2:
+        raise ValueError("Attack threshold tuning requires Benign and attack validation examples")
+    scores, _ = _multiclass_attack_scores(trained_classifier.model, x, benign_index)
+    precision, recall, candidates = precision_recall_curve(target, scores)
+    eligible = np.flatnonzero(recall[:-1] >= minimum_recall)
+    best = max(eligible, key=lambda i: (precision[i], candidates[i]))
+    return {
+        "threshold_tuned": True,
+        "threshold": float(candidates[best]),
+        "benign_class_index": benign_index,
+        "validation_precision": float(precision[best]),
+        "validation_recall": float(recall[best]),
+        "validation_f1": _f1_from_precision_recall(precision[best], recall[best]),
+    }
+
+
 def _get_positive_scores(model: Any, x: pd.DataFrame) -> np.ndarray | None:
     if hasattr(model, "predict_proba"):
         probabilities = model.predict_proba(x)
@@ -227,7 +279,12 @@ def _positive_class_index(model: Any) -> int:
     return len(classes) - 1
 
 
-def _predict_with_threshold(model: Any, x: pd.DataFrame, threshold: float) -> np.ndarray:
+def _predict_with_threshold(
+    model: Any, x: pd.DataFrame, threshold: float, benign_class_index: int | None = None,
+) -> np.ndarray:
+    if benign_class_index is not None:
+        scores, attack_labels = _multiclass_attack_scores(model, x, benign_class_index)
+        return np.where(scores >= threshold, attack_labels, benign_class_index)
     scores = _get_positive_scores(model, x)
     if scores is None:
         return model.predict(x)
@@ -255,14 +312,15 @@ def evaluate_classifiers(
     evaluation_split: str = "test",
 ) -> pd.DataFrame:
     """Evaluate multiple trained classifiers and append every result to the CSV file."""
-    results = [
-        evaluate_classifier(
+    results = []
+    total_models = len(trained_classifiers)
+    for index, trained_classifier in enumerate(trained_classifiers, start=1):
+        print(f"evaluating {index}/{total_models} models", flush=True)
+        results.append(evaluate_classifier(
             trained_classifier,
             results_file_path=results_file_path,
             evaluation_split=evaluation_split,
-        )
-        for trained_classifier in trained_classifiers
-    ]
+        ))
     return pd.DataFrame(results)
 
 
@@ -287,12 +345,31 @@ def _false_positive_rate(y_true: pd.Series, y_pred: pd.Series, labels: list[int]
     return sum(class_rates) / len(class_rates) if class_rates else 0.0
 
 
+def _assign_result_ids(results: pd.DataFrame) -> pd.DataFrame:
+    """Preserve existing IDs and allocate missing IDs above the current maximum."""
+    results = results.copy()
+    if "id" not in results:
+        results.insert(0, "id", pd.Series(index=results.index, dtype="Int64"))
+    ids = pd.to_numeric(results["id"], errors="raise")
+    present = ids.dropna()
+    if (present < 1).any() or (present % 1 != 0).any() or present.duplicated().any():
+        raise ValueError("Result IDs must be unique positive integers")
+    next_id = int(present.max()) + 1 if len(present) else 1
+    missing = ids.isna()
+    ids.loc[missing] = range(next_id, next_id + int(missing.sum()))
+    results["id"] = ids.astype("int64")
+    return results[["id", *[column for column in results if column != "id"]]]
+
+
 def _append_results(metrics: dict[str, Any], results_file_path: Path) -> None:
     results_file_path.parent.mkdir(parents=True, exist_ok=True)
-    new_results = pd.DataFrame([metrics])
+    # IDs belong to the destination CSV, rather than caller-supplied metrics.
+    new_results = pd.DataFrame([{key: value for key, value in metrics.items() if key != "id"}])
     if results_file_path.exists() and results_file_path.stat().st_size > 0:
-        existing_results = pd.read_csv(results_file_path)
+        existing_results = _assign_result_ids(pd.read_csv(results_file_path))
         results = pd.concat([existing_results, new_results], ignore_index=True, sort=False)
     else:
         results = new_results
-    results.to_csv(results_file_path, index=False)
+    results = _assign_result_ids(results)
+    results.to_csv(results_file_path, index=False, float_format="%.2f")
+    metrics["id"] = int(results.iloc[-1]["id"])

@@ -7,49 +7,19 @@ import json
 from pathlib import Path
 
 import DataHandler
-import PreProcessing
-import Visualization
+import FeatureCache
 import Trainer
 import Evaluate
 import pandas as pd
-from time import perf_counter
 
 EXPLORATION_SAMPLE_SIZE = None
 
-def preprocess(dataset, resampling=None, features=None):
-    """Preprocess the data, and preprocess sample for feature visualization"""
-    start_time = perf_counter()
-    preprocessed_data = PreProcessing.preprocess_data(dataset)
-    print(f"[timing] preprocessing clean numeric values: {perf_counter() - start_time:.2f}s")
-
-    strategies = resampling or ["no_resampling", "undersample_majority", "oversample_minority"]
-    builders = {
-        "no_resampling": lambda data: data,
-        "undersample_majority": PreProcessing.majority_class_undersampling,
-        "oversample_minority": PreProcessing.minority_class_oversampling,
-    }
-    resampled_datasets = {name: builders[name](preprocessed_data) for name in strategies}
-
-    feature_representations = {}
-    for resampling_strategy, resampled_dataset in resampled_datasets.items():
-        print(f"[timing] building feature representations for {resampling_strategy}")
-        feature_representations[resampling_strategy] = PreProcessing.get_all_feature_representations(
-            resampled_dataset, selected=features
-        )
-
-    return preprocessed_data, feature_representations
-
-def explore_data(data, preprocessed_data, sampled_data, figures_path=Visualization.FIGURES_PATH):
-    """Explore the data by visualizing and printing information"""
-    Visualization.print_dataset_information(data)
-    Visualization.create_exploration_visualizations(
-        preprocessed_data,
-        sampled_data,
-        figures_path=figures_path,
-    )
-
 def blanket_search(feature_representations_by_resampling: dict, sample_size=EXPLORATION_SAMPLE_SIZE, models=None, model_params=None, no_background=None):
     trained_models = []
+    total_models = sum(
+        Trainer.count_models(representations, models, model_params)
+        for representations in feature_representations_by_resampling.values()
+    )
     for resampling_strategy, feature_representations in feature_representations_by_resampling.items():
         trained_models.extend(
             Trainer.compare_feature_representations_and_classifiers(
@@ -59,6 +29,8 @@ def blanket_search(feature_representations_by_resampling: dict, sample_size=EXPL
                 model_names=models,
                 model_params=model_params,
                 no_background=no_background,
+                progress_offset=len(trained_models),
+                progress_total=total_models,
             )
         )
     return trained_models
@@ -67,16 +39,16 @@ def evaluate(trained_models):
     return Evaluate.evaluate_classifiers(trained_models)
 
 
-FEATURE_NAMES = ["raw_numeric", "pca", "pca_95"] + [
-    f"{kind}_{count}" for count in (5, 10, 20) for kind in ("umap", "umap_supervised")
-]
+FEATURE_NAMES = FeatureCache.FEATURE_NAMES
 MODEL_NAMES = list(Trainer.get_classifiers()) + ["xgboost_scale_pos_weight"]
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Train and evaluate selected network traffic classifiers.")
+    parser.add_argument("--multiclass", action="store_true",
+                        help="Predict Benign (including Background) or the specific attack category instead of binary labels.")
     parser.add_argument("--models", "--model", nargs="+", choices=MODEL_NAMES,
-                        help="Models to train. With visualization flags alone, no models are trained; with no flags, runs all models.")
+                        help="Models to train (default: all).")
     parser.add_argument("--features", nargs="+", choices=FEATURE_NAMES,
                         help="Feature representations (default: all).")
     parser.add_argument("--sample-size", "--exploration-sample-size", type=int,
@@ -85,18 +57,18 @@ def parse_args(argv=None):
                         choices=["no_resampling", "undersample_majority", "oversample_minority"],
                         help="Resampling strategies (default: all).")
     parser.add_argument("--model-params", default="{}", metavar="JSON",
-                        help='JSON mapping model names to parameters; pipelines use classifier__PARAM keys.')
-    parser.add_argument("--early-stopping-rounds", type=int, default=20,
-                        help="XGBoost validation-loss patience (default: 20; 0 disables). Per-model JSON overrides this.")
+                        help='JSON mapping model names to parameters; lists form a Cartesian grid; pipelines use classifier__PARAM keys.')
+    parser.add_argument("--early-stopping-rounds", type=int, default=None,
+                        help="XGBoost early-stopping patience (default: disabled; 0 disables). Per-model JSON overrides this.")
     parser.add_argument("--init", action="store_true", help="Create fixed stratified CSV splits and exit.")
     parser.add_argument("--final-evaluation", action="store_true",
-                        help="Explicitly evaluate selected models on reserved test.csv; no sampling or exploration.")
+                        help="Explicitly evaluate selected models on reserved test.csv; no sampling.")
     parser.add_argument("--no-background", nargs="*", metavar="SPLIT",
                         help="Exclude Background from selected splits: train val dev test (spaces/commas accepted); flag alone means all loaded splits.")
-    parser.add_argument("--exploration", action="store_true", help="Enable dataset exploration reports and plots (default: disabled).")
-    parser.add_argument("--learning-curves", action="store_true", help="Enable learning curve plots (losses are always recorded).")
-    parser.add_argument("--confusion-matrices", action="store_true",
-                        help="Plot default/tuned test confusion matrices (without models, reads existing CSV only).")
+    parser.add_argument("--cache-dir", type=Path, default=FeatureCache.CACHE_PATH,
+                        help="Feature cache directory (default: cache/features).")
+    parser.add_argument("--rebuild-cache", action="store_true",
+                        help="Recompute and replace the selected cached feature representations.")
     args = parser.parse_args(argv)
     if args.no_background is None:
         args.no_background = []
@@ -108,12 +80,14 @@ def parse_args(argv=None):
         if invalid or not selected:
             parser.error("--no-background accepts train, val, dev, test (or all)")
         args.no_background = list(dict.fromkeys(selected))
-    if args.final_evaluation and (args.init or args.sample_size is not None or args.exploration or args.models is None):
-        parser.error("--final-evaluation requires explicit --model(s) and cannot combine with --init, --sample-size, or --exploration")
-    args.results = Path("final_evaluation_results.csv") if args.final_evaluation else Evaluate.RESULTS_FILE_PATH
+    if args.final_evaluation and (args.init or args.sample_size is not None or args.models is None):
+        parser.error("--final-evaluation requires explicit --model(s) and cannot combine with --init, --sample-size")
+    args.results = Evaluate.CLASSIFICATION_RESULTS_FILE_PATH if args.multiclass else Evaluate.RESULTS_FILE_PATH
+    if args.multiclass and (args.models and "xgboost_scale_pos_weight" in args.models):
+        parser.error("xgboost_scale_pos_weight is binary-only; use xgboost with --multiclass")
     if args.sample_size is not None and args.sample_size <= 0:
         parser.error("--sample-size must be positive")
-    if args.early_stopping_rounds < 0:
+    if args.early_stopping_rounds is not None and args.early_stopping_rounds < 0:
         parser.error("--early-stopping-rounds must be nonnegative")
     try:
         params = json.loads(args.model_params)
@@ -128,14 +102,17 @@ def parse_args(argv=None):
             unknown = values.keys() - prototypes[name][0].get_params().keys()
             if unknown:
                 raise ValueError(f"unknown parameters for {name}: {sorted(unknown)}")
-            prototypes[name][0].set_params(**values)
+            for combination in Trainer.parameter_combinations(values):
+                prototypes[name][0].set_params(**combination)
         for name in ("xgboost", "xgboost_scale_pos_weight"):
             if args.models is None or name in args.models:
                 values = params.setdefault(name, {})
-                values.setdefault("early_stopping_rounds", args.early_stopping_rounds or None)
-                patience = values["early_stopping_rounds"]
-                if patience is not None and (type(patience) is not int or patience <= 0):
-                    raise ValueError(f"{name}.early_stopping_rounds must be a positive integer or null")
+                if args.early_stopping_rounds is not None:
+                    values.setdefault("early_stopping_rounds", args.early_stopping_rounds or None)
+                patience = values.get("early_stopping_rounds")
+                for candidate in patience if isinstance(patience, list) else [patience]:
+                    if candidate is not None and (type(candidate) is not int or candidate <= 0):
+                        raise ValueError(f"{name}.early_stopping_rounds candidates must be positive integers or null")
         args.model_params = params
     except (ValueError, TypeError) as error:
         parser.error(f"invalid --model-params: {error}")
@@ -148,45 +125,23 @@ def main(argv=None) -> None:
     if args.init:
         DataHandler.initialize_splits(DataHandler.DATA_FILE_PATH, DataHandler.SPLITS_PATH)
         return
-    visualization_only = args.models is None and (args.exploration or args.learning_curves or args.confusion_matrices)
-    if visualization_only and not args.exploration:
-        if args.learning_curves:
-            Visualization.create_learning_curve_visualizations(args.results, Visualization.FIGURES_PATH)
-        if args.confusion_matrices:
-            Visualization.create_confusion_matrix_visualizations(args.results, Visualization.FIGURES_PATH)
-        return
-    # read data
     try:
-        dataset = DataHandler.load_training_sample(
-            args.sample_size, DataHandler.SPLITS_PATH, no_background=args.no_background,
-            final_evaluation=args.final_evaluation,
+        sample_feature_representations = FeatureCache.load_features(
+            sample_size=args.sample_size, resampling=args.resampling, features=args.features,
+            multiclass=args.multiclass, no_background=args.no_background,
+            final_evaluation=args.final_evaluation, cache_dir=args.cache_dir,
+            rebuild=args.rebuild_cache,
         )
     except (FileNotFoundError, ValueError) as error:
         raise SystemExit(str(error)) from error
 
-    # preprocess data
-    preprocessed_data, sample_feature_representations = preprocess(
-        dataset, args.resampling, args.features
+    trained_models = blanket_search(
+        sample_feature_representations, args.sample_size, args.models, args.model_params, args.no_background
     )
-
-    # visualize and explore data
-    if args.exploration:
-        Visualization.FIGURES_PATH.mkdir(parents=True, exist_ok=True)
-        explore_data(dataset, preprocessed_data, preprocessed_data, Visualization.FIGURES_PATH)
-    # train combining feature representations and classifiers
-    if not visualization_only:
-        trained_models = blanket_search(
-            sample_feature_representations, args.sample_size, args.models, args.model_params, args.no_background
-        )
-        # evaluate trained models
-        Evaluate.evaluate_classifiers(
-            trained_models, results_file_path=args.results,
-            evaluation_split="final_test" if args.final_evaluation else "test",
-        )
-    if args.learning_curves:
-        Visualization.create_learning_curve_visualizations(args.results, Visualization.FIGURES_PATH)
-    if args.confusion_matrices:
-        Visualization.create_confusion_matrix_visualizations(args.results, Visualization.FIGURES_PATH)
+    Evaluate.evaluate_classifiers(
+        trained_models, results_file_path=args.results,
+        evaluation_split="final_test" if args.final_evaluation else "test",
+    )
 
 
 if __name__ == "__main__":

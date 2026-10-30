@@ -70,10 +70,13 @@ def load_training_sample(
     sample_size: int | None = None, splits_path: Path | str = SPLITS_PATH,
     no_background: list[str] | None = None,
     final_evaluation: bool = False,
-) -> DataSet:
+    multiclass: bool = False,
+    include_all_splits: bool = False,
+) -> DataSet | dict[str, X_and_Y]:
     """Load all fixed splits, or internally split an explicit training-pool sample.
 
-    Normal runs never read test.csv. Explicit final evaluation places that
+    With include_all_splits, return all four splits for feature caching.
+    Otherwise normal runs never read test.csv. Explicit final evaluation places that
     reserved holdout in DataSet.test for the existing transformation pipeline.
     Sampled runs split 60/10/20/10 and leave the internal final 10% unused.
     Sampling occurs before any imputation, scaling, or class resampling.
@@ -87,14 +90,31 @@ def load_training_sample(
         )
     if final_evaluation and sample_size is not None:
         raise ValueError("--final-evaluation cannot be combined with --sample-size")
-    train = read_data(paths[0])
+    def load_split(path):
+        frame = read_data(path)
+        if multiclass:
+            if "traffic_category" not in frame.columns:
+                raise ValueError("--multiclass requires a traffic_category column")
+            categories = frame["traffic_category"].replace({"Background": "Benign"})
+            expected = {"Benign", "Bruteforce", "Bruteforce-XML", "Probing", "XMRIGCC CryptoMiner"}
+            unknown = set(categories.dropna().unique()) - expected
+            if categories.isna().any() or unknown:
+                raise ValueError(f"Unknown traffic categories for --multiclass: {sorted(unknown)}")
+            frame[TARGET_COLUMN] = categories
+        return frame
+
+    heldout = None
+    train = load_split(paths[0])
     if sample_size is None:
         encoder = LabelEncoder().fit(train[TARGET_COLUMN])
         dataset = DataSet(
             train=_split_features_and_labels(train, encoder),
-            val=_split_features_and_labels(read_data(paths[1]), encoder),
-            test=_split_features_and_labels(read_data(paths[3] if final_evaluation else paths[2]), encoder),
+            val=_split_features_and_labels(load_split(paths[1]), encoder),
+            test=_split_features_and_labels(load_split(paths[3] if final_evaluation and not include_all_splits else paths[2]), encoder),
         )
+        if include_all_splits:
+            heldout = _split_features_and_labels(load_split(paths[3]), encoder)
+            encoder.transform(heldout.y)
         # Fail early if a manually edited holdout contains unknown target labels.
         encoder.transform(dataset.val.y)
         encoder.transform(dataset.test.y)
@@ -115,6 +135,10 @@ def load_training_sample(
             else:
                 sample = train
             dataset = get_stratified_split(sample)
+            if include_all_splits:
+                heldout = _split_features_and_labels(
+                    _get_stratified_frames(sample)["test"], dataset.train.label_encoder
+                )
         except ValueError as error:
             raise ValueError(f"Cannot create a stratified sample and run splits: {error}") from error
     if no_background:
@@ -122,8 +146,10 @@ def load_training_sample(
         if unknown:
             raise ValueError(f"Unknown --no-background splits: {sorted(unknown)}")
         loaded = {"train": dataset.train, "val": dataset.val, "test": dataset.test}
-        for field, split in loaded.items():
-            split_name = ("test" if final_evaluation else "dev") if field == "test" else field
+        if include_all_splits:
+            loaded["heldout"] = heldout
+        for field, split in list(loaded.items()):
+            split_name = "test" if field == "heldout" else (("test" if final_evaluation and not include_all_splits else "dev") if field == "test" else field)
             if split_name not in no_background:
                 continue
             if "traffic_category" not in split.x.columns:
@@ -140,6 +166,8 @@ def load_training_sample(
                 raise ValueError("--no-background removed an entire training target class")
             print(f"Excluded {int((~keep).sum()):,} Background rows from {split_name}.")
             loaded[field] = filtered
+        if include_all_splits:
+            heldout = loaded.pop("heldout")
         dataset = DataSet(**loaded)
     print(
         (f"Sampled {sample_size:,} of {len(train):,} fixed training rows: "
@@ -147,6 +175,8 @@ def load_training_sample(
         f"train={len(dataset.train.y):,}, val={len(dataset.val.y):,}, "
         f"{'test' if final_evaluation else 'dev'}={len(dataset.test.y):,}"
     )
+    if include_all_splits:
+        return {"train": dataset.train, "val": dataset.val, "dev": dataset.test, "test": heldout}
     return dataset
 
 

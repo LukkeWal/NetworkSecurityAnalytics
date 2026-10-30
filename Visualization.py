@@ -4,6 +4,7 @@ Visualization contains dataset exploration utilities, reports, and plots.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -11,79 +12,58 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.manifold import TSNE
+from sklearn.metrics import auc
 from sklearn.preprocessing import StandardScaler
 
-from DataHandler import DataSet, X_and_Y
+from DataHandler import DataSet
 
 TARGET_COLUMN = "Label"
 ATTACK_TYPE_COLUMN = "traffic_category"
-FIGURES_PATH = Path("figures")
+FIGURES_PATH = Path("results/figures")
 MAX_FEATURES = 100
 
 
 def create_confusion_matrix_visualizations(
-    results_file_path: Path | str = "evaluation_results.csv",
+    results_file_path: Path | str,
+    result_id: int,
     figures_path: Path | str = FIGURES_PATH,
 ) -> dict[str, Path]:
-    """Plot default/selected test matrices for the latest recorded run per classifier."""
-    path = Path(results_file_path)
-    required = {"classifier_name", "class_labels", "default_confusion_matrix", "confusion_matrix"}
-    if not path.exists():
-        print(f"No confusion matrices found: {path} does not exist.")
-        return {}
-    results = pd.read_csv(path)
-    if not required.issubset(results.columns):
-        print("No recorded confusion matrices found in the results CSV.")
-        return {}
-    candidates = results.dropna(subset=list(required))
-    latest = candidates.groupby("classifier_name", sort=False).tail(1)
-    saved = {}
-    for _, row in latest.iterrows():
-        labels = json.loads(row["class_labels"])
-        settings = json.loads(row["settings"])
-        matrices = {column: np.asarray(json.loads(row[column]))
-                    for column in ("default_confusion_matrix", "confusion_matrix")}
-        figure, axes = plt.subplots(1, 2, figsize=(11, 5), layout="constrained")
-        for axis, column, title in zip(
-            axes, ("default_confusion_matrix", "confusion_matrix"),
-            (f"Default threshold: {row.get('default_threshold')}",
-             f"Tuned threshold: {settings['threshold']:.4g}" if settings.get("threshold_tuned") else "Selected: default"),
-        ):
-            matrix = matrices[column]
-            image = _plot_percentage_matrix(axis, matrix)
-            axis.set_xticks(range(len(labels)), labels=labels)
-            axis.set_yticks(range(len(labels)), labels=labels)
-            axis.set_xlabel("Predicted label")
-            axis.set_ylabel("True label")
-            axis.set_title(title)
-        figure.suptitle(
-            f"{row['classifier_name']} | {row.get('feature_representation_name', '')}\n"
-            f"{row.get('evaluation_split', 'test')} confusion matrices | {row.get('timestamp', '')}"
-        )
-        figure.colorbar(image, ax=axes, label="Percentage of actual class (%)", shrink=0.8)
-        output = Path(figures_path)
-        output.mkdir(parents=True, exist_ok=True)
-        name = str(row["classifier_name"])
-        safe_name = "".join(char if char.isalnum() or char in "_-" else "_" for char in name)
-        if row.get("evaluation_split") == "final_test":
-            safe_name += "_final_test"
-        filename = f"{safe_name}_confusion_matrices.png"
-        _save_current_figure(axes[0], output, filename)
-        saved[name] = output / filename
-        print(f"Saved confusion matrices to {saved[name].resolve()}")
-        if pd.notna(row.get("traffic_category_confusion")):
-            breakdown = json.loads(row["traffic_category_confusion"])
-            axis = plot_traffic_category_confusion(breakdown, name, settings, row.get("default_threshold"),
-                                                  evaluation_split=row.get("evaluation_split", "test"))
-            category_filename = f"{safe_name}_traffic_category_confusion_matrices.png"
-            _save_current_figure(axis, output, category_filename)
-            saved[f"{name}_traffic_categories"] = output / category_filename
-            print(f"Saved traffic category matrices to {(output / category_filename).resolve()}")
-        else:
-            print(f"No traffic category counts recorded for {name}; rerun evaluation to add them.")
-    if latest.empty:
-        print("No recorded confusion matrices found in the results CSV.")
-    return saved
+    """Plot default/selected matrices for one saved result."""
+    row = load_result(results_file_path, result_id)
+    _require_fields(row, "class_labels", "settings", "default_confusion_matrix", "confusion_matrix")
+    labels = json.loads(row["class_labels"])
+    settings = json.loads(row["settings"])
+    matrices = {column: np.asarray(json.loads(row[column]))
+                for column in ("default_confusion_matrix", "confusion_matrix")}
+    figure, axes = plt.subplots(1, 2, figsize=(11, 5), layout="constrained")
+    for axis, column, title in zip(
+        axes, ("default_confusion_matrix", "confusion_matrix"),
+        (f"Default threshold: {row.get('default_threshold')}",
+         f"Tuned threshold: {settings['threshold']:.4g}" if settings.get("threshold_tuned") else "Selected: default"),
+    ):
+        matrix = matrices[column]
+        image = _plot_percentage_matrix(axis, matrix)
+        axis.set_xticks(range(len(labels)), labels=labels)
+        axis.set_yticks(range(len(labels)), labels=labels)
+        axis.set_xlabel("Predicted label")
+        axis.set_ylabel("True label")
+        axis.set_title(title)
+    figure.suptitle(
+        f"Result {result_id} | {row['classifier_name']} | {row.get('feature_representation_name', '')}\n"
+        f"{row.get('evaluation_split', 'test')} confusion matrices | {row.get('timestamp', '')}"
+    )
+    figure.colorbar(image, ax=axes, label="Percentage of actual class (%)", shrink=0.8)
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    name = str(row["classifier_name"])
+    safe_name = "".join(char if char.isalnum() or char in "_-" else "_" for char in name)
+    if row.get("evaluation_split") == "final_test":
+        safe_name += "_final_test"
+    filename = f"result_{result_id}_{safe_name}_confusion_matrices.png"
+    _save_current_figure(axes[0], output, filename)
+    path = output / filename
+    print(f"Saved confusion matrices to {path.resolve()}")
+    return {name: path}
 
 
 def plot_traffic_category_confusion(breakdown, classifier_name, settings, default_threshold, evaluation_split="test"):
@@ -120,51 +100,133 @@ def _plot_percentage_matrix(axis, matrix):
 
 
 def create_learning_curve_visualizations(
-    results_file_path: Path | str = "evaluation_results.csv",
+    results_file_path: Path | str,
+    result_id: int,
     figures_path: Path | str = FIGURES_PATH,
 ) -> dict[str, Path]:
-    """Save the latest recorded XGBoost and RF curves in CSV append order.
+    """Plot the recorded training and validation losses for one result."""
+    row = load_result(results_file_path, result_id)
+    _require_fields(row, "training_curve")
+    curve = json.loads(row["training_curve"])
+    title = f"Result {result_id} | {row['classifier_name']} | {row.get('feature_representation_name', '')}"
+    axis = plot_learning_curve(curve, title=title)
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    filename = f"result_{result_id}_learning_curve.png"
+    _save_current_figure(axis, output, filename)
+    print(f"Saved learning curve to {(output / filename).resolve()}")
+    return {str(result_id): output / filename}
 
-    Includes weighted variants. Historical rows without curves are skipped.
-    Returns the saved plot paths, keyed by model family.
-    """
-    results_file_path = Path(results_file_path)
-    if not results_file_path.exists():
-        print(f"No learning curves found: {results_file_path} does not exist.")
-        return {}
-    results = pd.read_csv(results_file_path)
-    if not {"classifier_name", "training_curve"}.issubset(results.columns):
-        print("No recorded learning curves found in the results CSV.")
-        return {}
 
-    figures_path = Path(figures_path)
-    saved_paths = {}
-    families = {
-        "xgboost": ("xgboost", "xgboost_scale_pos_weight"),
-        "random_forest": ("random_forest", "random_forest_balanced"),
-    }
-    for family, classifier_names in families.items():
-        candidates = results.loc[
-            results["classifier_name"].isin(classifier_names)
-            & results["training_curve"].notna()
-            & results["training_curve"].astype(str).str.strip().ne("")
-        ]
-        if candidates.empty:
-            print(f"No recorded learning curve found for {family}.")
-            continue
-        latest = candidates.iloc[-1]
-        curve = json.loads(latest["training_curve"])
-        title = str(latest["classifier_name"])
-        for column in ("feature_representation_name", "timestamp"):
-            if column in latest and pd.notna(latest[column]):
-                title += f" | {latest[column]}"
-        axis = plot_learning_curve(curve, title=title)
-        figures_path.mkdir(parents=True, exist_ok=True)
-        filename = f"{family}_learning_curve.png"
-        _save_current_figure(axis, figures_path, filename)
-        saved_paths[family] = figures_path / filename
-        print(f"Saved learning curve to {saved_paths[family].resolve()}")
-    return saved_paths
+def create_roc_curve_visualizations(
+    results_file_path: Path | str,
+    result_id: int,
+    figures_path: Path | str = FIGURES_PATH,
+) -> dict[str, Path]:
+    """Plot the recorded binary ROC curve without retraining the classifier."""
+    row = load_result(results_file_path, result_id)
+    _require_fields(row, "roc_curve")
+    title = (f"Result {result_id} | {row['classifier_name']} | "
+             f"{row.get('feature_representation_name', '')}\n"
+             f"{row.get('evaluation_split', 'test')} ROC curve")
+    axis = plot_roc_curve(json.loads(row["roc_curve"]), title=title)
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / f"result_{result_id}_roc_curve.png"
+    _save_current_figure(axis, output, path.name)
+    print(f"Saved ROC curve to {path.resolve()}")
+    return {str(result_id): path}
+
+
+def create_precision_recall_curve_visualizations(
+    results_file_path: Path | str,
+    result_id: int,
+    figures_path: Path | str = FIGURES_PATH,
+    minimum_recall: float = 0.0,
+) -> dict[str, Path]:
+    """Plot the recorded binary precision-recall curve for one result."""
+    row = load_result(results_file_path, result_id)
+    _require_fields(row, "precision_recall_curve")
+    title = (f"Result {result_id} | {row['classifier_name']} | "
+             f"{row.get('feature_representation_name', '')}\n"
+             f"{row.get('evaluation_split', 'test')} precision-recall curve")
+    if minimum_recall:
+        title += f" (recall {minimum_recall:g}-1)"
+    axis = plot_precision_recall_curve(
+        json.loads(row["precision_recall_curve"]), title=title, minimum_recall=minimum_recall,
+    )
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    suffix = "_95" if minimum_recall == 0.95 else ""
+    path = output / f"result_{result_id}_precision_recall_curve{suffix}.png"
+    _save_current_figure(axis, output, path.name)
+    print(f"Saved precision-recall curve to {path.resolve()}")
+    return {str(result_id): path}
+
+
+def plot_precision_recall_curve(
+    curve: dict, title: str = "Precision-recall curve", minimum_recall: float = 0.0,
+):
+    """Plot recall on the x-axis and precision on the y-axis."""
+    precision = np.asarray(curve["precision"], dtype=float)
+    recall = np.asarray(curve["recall"], dtype=float)
+    if (precision.ndim != 1 or recall.ndim != 1 or len(recall) < 2
+            or precision.shape != recall.shape
+            or not np.isfinite(precision).all() or not np.isfinite(recall).all()
+            or ((precision < 0) | (precision > 1)).any()
+            or ((recall < 0) | (recall > 1)).any()
+            or not ((np.diff(recall) >= 0).all() or (np.diff(recall) <= 0).all())):
+        raise ValueError("Precision and recall must be equal-length arrays of at least two finite values in [0, 1], with monotonic recall.")
+    if not 0 <= minimum_recall < 1:
+        raise ValueError("Minimum recall must be in [0, 1).")
+    full_auc = auc(recall, precision)
+    if minimum_recall:
+        # Keep the boundary intersection so zooming preserves the original line.
+        if recall[0] > recall[-1]:
+            recall, precision = recall[::-1], precision[::-1]
+        start = np.searchsorted(recall, minimum_recall, side="left")
+        if start == len(recall):
+            raise ValueError("No recorded curve points in the requested recall range.")
+        if 0 < start < len(recall) and recall[start] > minimum_recall:
+            boundary_precision = np.interp(minimum_recall, recall[start - 1:start + 1],
+                                           precision[start - 1:start + 1])
+            precision = np.r_[boundary_precision, precision[start:]]
+            recall = np.r_[minimum_recall, recall[start:]]
+        else:
+            recall, precision = recall[start:], precision[start:]
+        padding = max(float(np.ptp(precision)) * 0.05, 0.0001)
+        precision_limits = (max(0, float(precision.min()) - padding),
+                            min(1, float(precision.max()) + padding))
+    else:
+        precision_limits = (0, 1.05)
+    figure, axis = plt.subplots(figsize=(8, 6))
+    axis.plot(recall, precision, label=f"PR (full AUC = {full_auc:.4f})")
+    axis.set(xlim=(minimum_recall, 1), ylim=precision_limits, xlabel="Recall",
+             ylabel="Precision", title=title)
+    axis.legend(loc="lower left")
+    axis.grid(alpha=0.3)
+    figure.tight_layout()
+    return axis
+
+
+def plot_roc_curve(curve: dict, title: str = "ROC curve"):
+    """Plot false/true positive rates with AUC and a chance baseline."""
+    fpr = np.asarray(curve["fpr"], dtype=float)
+    tpr = np.asarray(curve["tpr"], dtype=float)
+    if (fpr.ndim != 1 or tpr.ndim != 1 or len(fpr) < 2 or fpr.shape != tpr.shape
+            or not np.isfinite(fpr).all() or not np.isfinite(tpr).all()
+            or ((fpr < 0) | (fpr > 1)).any() or ((tpr < 0) | (tpr > 1)).any()
+            or (np.diff(fpr) < 0).any() or (np.diff(tpr) < 0).any()):
+        raise ValueError("ROC rates must be equal-length, nondecreasing arrays of at least two finite values in [0, 1].")
+    figure, axis = plt.subplots(figsize=(8, 6))
+    axis.plot(fpr, tpr, label=f"ROC (AUC = {auc(fpr, tpr):.4f})")
+    axis.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Chance")
+    axis.set(xlim=(0, 1), ylim=(0, 1.05), xlabel="False positive rate",
+             ylabel="True positive rate", title=title)
+    axis.legend(loc="lower right")
+    axis.grid(alpha=0.3)
+    figure.tight_layout()
+    return axis
 
 
 def plot_learning_curve(curve: dict, title: str = "Learning curve"):
@@ -221,7 +283,7 @@ def create_exploration_visualizations(
 ) -> None:
     """Create and save plots for quick dataset exploration."""
     figures_path = Path(figures_path)
-    figures_path.mkdir(exist_ok=True)
+    figures_path.mkdir(parents=True, exist_ok=True)
 
     axis = plot_label_distribution(data)
     _save_current_figure(axis, figures_path, "label_distribution.png")
@@ -399,6 +461,8 @@ def get_tsne_features(
 
     scaler = StandardScaler()
     scaled_features = scaler.fit_transform(features)
+    if len(features) < 2 or features.shape[1] < 2:
+        raise ValueError("t-SNE requires at least two rows and two numeric features.")
     effective_perplexity = min(perplexity, len(features) - 1)
     reducer = TSNE(
         n_components=2,
@@ -427,6 +491,8 @@ def _select_numeric_features(
 
 
 def _get_all_features(data: DataSet) -> pd.DataFrame:
+    if isinstance(data, pd.DataFrame):
+        return data.drop(columns=[TARGET_COLUMN], errors="ignore")
     return pd.concat(
         [split.x for split in [data.train, data.val, data.test]],
         ignore_index=True,
@@ -434,6 +500,8 @@ def _get_all_features(data: DataSet) -> pd.DataFrame:
 
 
 def _get_labels(data: DataSet) -> pd.Series:
+    if isinstance(data, pd.DataFrame):
+        return data[TARGET_COLUMN]
     return pd.concat(
         [split.y for split in [data.train, data.val, data.test]],
         ignore_index=True,
@@ -441,6 +509,8 @@ def _get_labels(data: DataSet) -> pd.Series:
 
 
 def _get_feature_column(data: DataSet, column: str) -> pd.Series:
+    if isinstance(data, pd.DataFrame):
+        return data[column]
     return pd.concat(
         [
             split.x[column]
@@ -453,6 +523,8 @@ def _get_feature_column(data: DataSet, column: str) -> pd.Series:
 
 
 def _has_feature_column(data: DataSet, column: str) -> bool:
+    if isinstance(data, pd.DataFrame):
+        return column in data.columns
     return any(column in split.x.columns for split in [data.train, data.val, data.test])
 
 
@@ -485,5 +557,137 @@ def _get_default_color_column(data: pd.DataFrame) -> str | None:
     return None
 
 
+
+RESULT_PLOTS = ("confusion-matrix", "traffic-category-confusion", "learning-curve", "roc-curve",
+                "precision-recall-curve", "precision-recall-curve-95")
+DATASET_PLOTS = (
+    "label-distribution", "traffic-category-distribution", "feature-correlations",
+    "feature-distributions", "feature-distributions-log", "outliers", "tsne",
+)
+
+
+def load_result(results_file_path: Path | str, result_id: int) -> pd.Series:
+    """Read exactly one result without changing the CSV or allocating IDs."""
+    results = pd.read_csv(results_file_path)
+    if "id" not in results:
+        raise ValueError("Results CSV has no id column.")
+    ids = pd.to_numeric(results["id"], errors="raise")
+    if ids.isna().any() or (ids < 1).any() or (ids % 1 != 0).any() or ids.duplicated().any():
+        raise ValueError("Result IDs must be unique positive integers.")
+    selected = results.loc[ids == result_id]
+    if selected.empty:
+        raise ValueError(f"Result ID {result_id} was not found in {results_file_path}.")
+    return selected.iloc[0]
+
+
+def _require_fields(row: pd.Series, *fields: str) -> None:
+    missing = [field for field in fields if pd.isna(row.get(field)) or str(row[field]).strip() == ""]
+    if missing:
+        raise ValueError(f"Result {row.get('id')} has no recorded {', '.join(missing)}; this plot is unavailable.")
+
+
+def create_traffic_category_visualization(results_file_path, result_id, figures_path=FIGURES_PATH):
+    row = load_result(results_file_path, result_id)
+    _require_fields(row, "traffic_category_confusion", "settings")
+    axis = plot_traffic_category_confusion(
+        json.loads(row["traffic_category_confusion"]),
+        f"Result {result_id} | {row['classifier_name']}",
+        json.loads(row["settings"]), row.get("default_threshold"),
+        evaluation_split=row.get("evaluation_split", "test"),
+    )
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / f"result_{result_id}_traffic_category_confusion_matrices.png"
+    _save_current_figure(axis, output, path.name)
+    print(f"Saved traffic category matrices to {path.resolve()}")
+    return path
+
+
+def create_dataset_visualization(data_path, plot, figures_path=FIGURES_PATH, sample_size=None):
+    """Plot data from the specified CSV; no experiment reconstruction or model training."""
+    from DataHandler import read_data
+
+    data = read_data(data_path)
+    if sample_size is not None and sample_size < len(data):
+        data = data.sample(n=sample_size, random_state=42)
+    if data.empty:
+        raise ValueError("Dataset CSV is empty.")
+    if plot in ("label-distribution", "tsne") and TARGET_COLUMN not in data:
+        raise ValueError(f"Dataset requires a {TARGET_COLUMN} column for {plot}.")
+    if plot == "label-distribution":
+        axis = plot_label_distribution(data)
+    elif plot == "traffic-category-distribution":
+        if ATTACK_TYPE_COLUMN not in data:
+            raise ValueError(f"Dataset has no {ATTACK_TYPE_COLUMN} column.")
+        axis = data[ATTACK_TYPE_COLUMN].value_counts().plot(kind="bar", title="Traffic category distribution")
+        axis.set_xlabel(ATTACK_TYPE_COLUMN)
+        axis.set_ylabel("Count")
+    elif plot == "feature-correlations":
+        axis = plot_feature_correlations(data, exclude_column=TARGET_COLUMN)
+    elif plot in ("feature-distributions", "feature-distributions-log"):
+        axis = plot_feature_distributions(data, exclude_column=TARGET_COLUMN,
+                                          log_scale=plot.endswith("-log"))
+    elif plot == "outliers":
+        axis = plot_outliers(data, exclude_column=TARGET_COLUMN)
+    elif plot == "tsne":
+        axis = plot_feature_embedding(get_tsne_features(data))
+    else:
+        raise ValueError(f"Unknown dataset plot: {plot}")
+    output = Path(figures_path)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / f"{Path(data_path).stem}_{plot}.png"
+    _save_current_figure(axis, output, path.name)
+    print(f"Saved {plot} to {path.resolve()}")
+    return path
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Generate a plot from a saved experiment or dataset CSV.")
+    parser.add_argument("--plot", required=True, choices=RESULT_PLOTS + DATASET_PLOTS)
+    parser.add_argument("--results", type=Path, help="Results CSV containing the experiment ID.")
+    parser.add_argument("--id", type=int, help="Positive result ID, unique within --results.")
+    parser.add_argument("--data", type=Path, help="Dataset CSV for exploration plots.")
+    parser.add_argument("--output-dir", type=Path, default=FIGURES_PATH,
+                        help="Plot directory (default: results/figures).")
+    parser.add_argument("--sample-size", type=int, help="Sample dataset rows with seed 42 before plotting.")
+    args = parser.parse_args(argv)
+    if args.plot in RESULT_PLOTS:
+        if args.results is None or args.id is None or args.id <= 0:
+            parser.error("Experiment plots require --results and a positive --id.")
+        if args.data is not None or args.sample_size is not None:
+            parser.error("--data and --sample-size apply only to dataset plots.")
+    else:
+        if args.data is None:
+            parser.error("Dataset plots require --data.")
+        if args.results is not None or args.id is not None:
+            parser.error("--results and --id apply only to experiment plots.")
+        if args.sample_size is not None and args.sample_size <= 0:
+            parser.error("--sample-size must be positive.")
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    try:
+        if args.plot == "confusion-matrix":
+            create_confusion_matrix_visualizations(args.results, args.id, args.output_dir)
+        elif args.plot == "traffic-category-confusion":
+            create_traffic_category_visualization(args.results, args.id, args.output_dir)
+        elif args.plot == "learning-curve":
+            create_learning_curve_visualizations(args.results, args.id, args.output_dir)
+        elif args.plot == "roc-curve":
+            create_roc_curve_visualizations(args.results, args.id, args.output_dir)
+        elif args.plot == "precision-recall-curve":
+            create_precision_recall_curve_visualizations(args.results, args.id, args.output_dir)
+        elif args.plot == "precision-recall-curve-95":
+            create_precision_recall_curve_visualizations(
+                args.results, args.id, args.output_dir, minimum_recall=0.95,
+            )
+        else:
+            create_dataset_visualization(args.data, args.plot, args.output_dir, args.sample_size)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise SystemExit(f"Cannot generate plot: {error}") from error
+
+
 if __name__ == "__main__":
-    create_learning_curve_visualizations()
+    main()
