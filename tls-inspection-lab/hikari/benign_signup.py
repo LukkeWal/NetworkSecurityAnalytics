@@ -1,4 +1,6 @@
-"""The authors' appSignupWordpress.py logic: sign up random users with Firefox and Chrome through their mitmproxy setting."""
+"""
+Signs up random users with Firefox and Chrome through the authors' mitmproxy setting (their appSignupWordpress.py logic).
+"""
 
 import sys
 import time

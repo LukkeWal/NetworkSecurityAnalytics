@@ -1,6 +1,6 @@
 """
-ZeekFlows reads the flows that Zeek and zeek-flowmeter rebuild from a pcap. flowmeter produces the same feature
-columns as the HIKARI-2021 CSV, so the rebuilt flows can go straight into the trained model.
+Reads the flows Zeek and zeek-flowmeter rebuild from a pcap. flowmeter gives the same feature columns as the HIKARI-2021 CSV,
+so the flows go straight into the model.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ def read_flows(zeek_dir: Path | str) -> pd.DataFrame:
 
 def attach_labels(flows: pd.DataFrame, labelled: pd.DataFrame) -> pd.DataFrame:
     """
-    Copy Label, traffic_category and row_id from the HIKARI CSV onto the rebuilt flows, matching on endpoints,
-    packet counts and duration since the CSV has no timestamps. Flows listed twice (as attack and as Benign) get the attack.
+    Copy Label, traffic_category and row_id from the HIKARI CSV onto the rebuilt flows, matching on endpoints, packet counts and
+    duration (the CSV has no timestamps). A flow listed as both attack and Benign gets the attack.
     """
     keys = ENDPOINT_COLUMNS + ["fwd_pkts_tot", "bwd_pkts_tot"]
     truth = labelled[[*keys, "flow_duration", "Label", "traffic_category", "row_id"]]

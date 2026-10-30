@@ -1,6 +1,6 @@
 """
-show_flows.py prints the flows of one replayed capture with Suricata's alert and the model's score next to each other,
-then what the model does as a filter behind Suricata. Needs the run folder made by demo/replay.sh.
+Prints the flows of one replayed capture with Suricata's alert and the model's score side by side, then what the model does as a
+filter behind Suricata. Needs the run folder made by demo/replay.sh.
 
     python demo/show_flows.py demo/run
 """

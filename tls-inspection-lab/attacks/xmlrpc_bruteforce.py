@@ -1,4 +1,6 @@
-"""Brute-force the WordPress XML-RPC interface with wp.getUsersBlogs (modelled on loginX in the HIKARI authors' AutoSignPost.py, which was not run)."""
+"""
+Brute-forces WordPress XML-RPC with wp.getUsersBlogs (like loginX in the HIKARI authors' AutoSignPost.py).
+"""
 
 import ssl
 import sys

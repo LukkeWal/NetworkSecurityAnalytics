@@ -1,6 +1,6 @@
 """
-CicFlows reads the flows Zeek rebuilds from CSE-CIC-IDS2018 victim captures and labels them. The raw captures carry no
-labels, so a flow is an attack when its source is one of the attacker addresses the dataset documents for that day.
+Reads the flows Zeek rebuilds from CSE-CIC-IDS2018 captures and labels them. The captures have no labels, so a flow counts
+as an attack when its source is an attacker address documented for that day.
 """
 
 from __future__ import annotations

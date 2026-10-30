@@ -1,4 +1,6 @@
-"""Brute-force the WordPress login page through a real browser, one password at a time (modelled on loginB in the HIKARI authors' AutoSignPost.py, which was not run)."""
+"""
+Brute-forces the WordPress login page through a real browser, one password at a time (like loginB in the HIKARI authors' AutoSignPost.py).
+"""
 
 import sys
 import time

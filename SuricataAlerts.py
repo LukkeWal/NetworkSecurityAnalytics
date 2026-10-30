@@ -1,6 +1,5 @@
 """
-SuricataAlerts reads the alerts Suricata wrote to eve.json and marks which rebuilt Zeek flows triggered one.
-A flow counts as flagged by Suricata when an alert matches its endpoints inside its time window.
+Reads Suricata's alerts from eve.json and marks which Zeek flows got one (same endpoints, alert inside the flow's time window).
 """
 
 from __future__ import annotations

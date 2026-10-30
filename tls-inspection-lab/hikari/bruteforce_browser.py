@@ -1,4 +1,6 @@
-"""Drive the HIKARI authors' loginB (a fresh browser per password, Firefox and Chrome alternating) through their mitmproxy setting."""
+"""
+Runs the authors' loginB (a fresh browser per password, Firefox and Chrome alternating) through their mitmproxy setting.
+"""
 
 import sys
 

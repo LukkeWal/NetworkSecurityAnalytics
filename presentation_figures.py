@@ -1,8 +1,6 @@
 """
-presentation_figures.py draws the slide-ready HIKARI-2021 and CSE-CIC-IDS2018 figures from the result files of
-integrate.py and integrate_cic.py.
+Draws the slide figures from the results of integrate.py and integrate_cic.py into presentation_figures/.
 The cross-dataset figure also needs the HIKARI model (python integrate.py train).
-Run it from the project directory; the images go to presentation_figures/.
 """
 
 from pathlib import Path

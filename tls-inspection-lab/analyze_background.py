@@ -1,8 +1,6 @@
 """
-analyze_background.py scores the author-scripts run's background-browsing capture (the authors' autobrowse.py visiting
-real external top-1M sites, captured at the client's own interface since it never passes through our nginx). This
-traffic has no plaintext hop to inspect (the destinations are real external sites we do not control), so only the
-encrypted-side comparison applies. Comparable in spirit to HIKARI's own "Background" category.
+Scores the background-browsing capture of an author-scripts run (the authors' autobrowse.py visiting external sites). There is no
+plaintext hop for it, so only the encrypted-side comparison applies.
 
     python analyze_background.py <run id>
 """

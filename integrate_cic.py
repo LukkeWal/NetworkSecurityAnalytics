@@ -1,7 +1,6 @@
 """
-integrate_cic.py repeats the Suricata + ML comparison on CSE-CIC-IDS2018 victim captures, whose attacks (web exploits,
-DoS floods, FTP brute force) are mostly plaintext. Run integration/run_pcap.sh on each capture into
-integration/runs_cic/<name> first, then:
+Same comparison as integrate.py on CSE-CIC-IDS2018, whose attacks are mostly plaintext. Run integration/run_pcap.sh on each capture
+into integration/runs_cic/<name> first, then:
 
     python integrate_cic.py prepare integration/runs_cic
     python integrate_cic.py train
@@ -79,7 +78,7 @@ def unseen_attack_types(flows: pd.DataFrame, data: pd.DataFrame) -> pd.DataFrame
 
 
 def sweep(data: pd.DataFrame, models: list[str] | None, features: list[str]) -> pd.DataFrame:
-    """Train every classifier on every feature representation, as main.py does, and tune each threshold at 95% recall."""
+    """Train every classifier and feature representation as main.py does, each with its threshold tuned at 95% recall."""
     split = DataHandler.get_stratified_split(data)
     processed = PreProcessing.preprocess_data(split)
     representations = PreProcessing.get_all_feature_representations(processed, selected=features)

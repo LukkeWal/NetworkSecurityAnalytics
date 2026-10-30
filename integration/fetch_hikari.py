@@ -1,5 +1,5 @@
 """
-fetch_hikari.py downloads HIKARI-2021 from Zenodo: the flow CSV into data/ and the six pcaps into pcaps/ (about 11 GB).
+Downloads HIKARI-2021 from Zenodo: the CSV into data/ and the six pcaps into pcaps/ (about 11 GB).
 
     python integration/fetch_hikari.py
     python integration/fetch_hikari.py --csv-only

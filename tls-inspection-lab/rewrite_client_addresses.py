@@ -1,9 +1,8 @@
 """
-rewrite_client_addresses.py turns the capture of the plaintext hop (nginx to WordPress) into what a decrypting proxy
-would hand to an IDS: the same HTTP, but with each connection showing the original client address and port instead of
-nginx's. The addresses come from the X-Forwarded-For and X-Client-Port headers nginx adds to every request.
+Rewrites the capture of the nginx-to-WordPress hop so each connection shows the original client address and port, as a decrypting
+proxy would. The addresses come from the X-Forwarded-For and X-Client-Port headers that nginx adds.
 
-    .venv/bin/python rewrite_client_addresses.py runs/<id>/plain/plain.pcap runs/<id>/plain/plain-clients.pcap
+    python rewrite_client_addresses.py runs/<id>/plain/plain.pcap runs/<id>/plain/plain-clients.pcap
 """
 
 import re

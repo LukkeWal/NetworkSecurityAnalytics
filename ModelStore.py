@@ -1,6 +1,5 @@
 """
-ModelStore trains the final binary classifier and saves everything needed to score new flows:
-the model, its feature columns, the training medians used to fill missing values and the tuned threshold.
+Trains the final binary classifier and saves it with its feature columns, training medians and tuned threshold.
 """
 
 from __future__ import annotations

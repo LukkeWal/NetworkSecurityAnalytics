@@ -1,6 +1,5 @@
 """
-check_duplicates.py shows that the HIKARI-2021 CSV lists many attack flows twice: once as the attack and once as
-Benign (or Background), with identical features and different uids.
+Shows that the HIKARI-2021 CSV lists many attack flows twice, as the attack and as Benign or Background with identical features.
 """
 
 import pandas as pd

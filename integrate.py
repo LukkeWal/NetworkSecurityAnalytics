@@ -1,6 +1,5 @@
 """
-integrate.py runs the Suricata + ML comparison. Train and save the model once, run integration/run_pcap.sh on
-each pcap, then evaluate the resulting run folders.
+Runs the Suricata + model comparison on HIKARI-2021. Train once, run integration/run_pcap.sh on each pcap, then evaluate.
 
     python integrate.py train
     python integrate.py evaluate integration/runs

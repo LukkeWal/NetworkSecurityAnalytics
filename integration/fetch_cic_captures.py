@@ -1,6 +1,5 @@
 """
-fetch_cic_captures.py downloads the victim-server and a few client captures of CSE-CIC-IDS2018 from its public bucket.
-Only single files are pulled out of the large daily archives. Needs remotezip (pip install remotezip).
+Downloads CSE-CIC-IDS2018 captures from its public bucket, pulling single files out of the daily archives. Needs remotezip.
 
     python integration/fetch_cic_captures.py pcaps_cic
 """

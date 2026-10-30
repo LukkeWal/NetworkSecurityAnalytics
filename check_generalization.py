@@ -1,13 +1,10 @@
 """
-check_generalization.py retrains the CSE-CIC-IDS2018 model under stricter splits than the random one used by integrate_cic.py:
-
-    random      the stratified split of DataHandler
-    time-block  per capture and attack type, the first 60% of the flows (in time order) train, the next 20% validate, the last 20% test
-    victim      only flows seen in the victim-server captures, so benign and attack traffic share a vantage point
+Retrains the CSE-CIC-IDS2018 model with stricter splits than integrate_cic.py: a time-ordered split per capture and attack type,
+and victim-server flows only.
 
     python check_generalization.py
 
-Run `integrate_cic.py prepare` first. Results go to integration_results_cic/generalization*.csv; DataHandler is not modified.
+Run integrate_cic.py prepare first. Results go to integration_results_cic/generalization*.csv.
 """
 
 import contextlib

@@ -1,6 +1,6 @@
 """
-analyze.py compares what each tool makes of one lab run: the flow model and Suricata on the encrypted traffic, and
-Suricata on the decrypted traffic (the plaintext hop between nginx and WordPress).
+Compares the model and Suricata on one lab run: both on the encrypted traffic, and Suricata on the decrypted hop between nginx
+and WordPress.
 
     python analyze.py <run id>
 """

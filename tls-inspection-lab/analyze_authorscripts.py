@@ -1,7 +1,5 @@
 """
-analyze_authorscripts.py is analyze.py's counterpart for the HIKARI-style testbed (docker-compose.hikari.yml / hikari.sh),
-whose clients run the HIKARI authors' own scripts. Capture point is the nginx/tls service, which sees both the
-encrypted side (all clients) and the plaintext hop to WordPress (all clients, via nginx's proxy).
+Same as analyze.py, for the testbed that runs the HIKARI authors' own scripts (hikari.sh).
 
     python analyze_authorscripts.py <run id>
 """

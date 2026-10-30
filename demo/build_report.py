@@ -1,9 +1,8 @@
 """
-build_report.py turns the saved results of the three experiments into one page for the demo: demo/results.html.
-It only reads files already in the repository (CSV results and figures), so it runs in a second and needs no data download.
+Builds demo/results.html from the saved results (CSVs and figures already in the repository).
 
-    python demo/build_report.py            # writes demo/results.html
-    python demo/build_report.py --open     # and opens it in the browser
+    python demo/build_report.py
+    python demo/build_report.py --open
 """
 
 import base64

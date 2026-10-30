@@ -1,10 +1,6 @@
 """
-IntegrationReport compares Suricata with the ML model on the same flows. It reports
-- the agreement table (both, Suricata only, ML only, neither)
-- precision, recall and false positive rate per detector, plus how many Suricata false alerts the model removes
-- detection per attack type
-- the model's confusion matrix with and without background traffic
-- Suricata against the model on all flows, on attacks only and on non-attacks only
+Compares Suricata and the model on the same flows: agreement, precision and recall per detector, false alerts removed,
+detection per attack type and confusion matrices.
 """
 
 from __future__ import annotations
