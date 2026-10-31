@@ -30,11 +30,13 @@ UMAP_INIT = "random"
 UMAP_RANDOM_STATE = RANDOM_STATE
 
 
-def preprocess_data(data: DataSet) -> DataSet:
+def preprocess_data(data: DataSet, fitted: dict | None = None) -> DataSet:
     """Return a preprocessed copy of each dataset split."""
     numeric_columns = data.train.x.select_dtypes(include="number").columns
     train_numeric = _clean_numeric_features(data.train.x, numeric_columns)
     train_medians = train_numeric.median(numeric_only=True).fillna(0)
+    if fitted is not None:
+        fitted.update(input_columns=numeric_columns.tolist(), initial_fill_values=train_medians)
 
     return DataSet(
         train=_preprocess_split(data.train, numeric_columns, train_medians),
@@ -186,16 +188,21 @@ def _feature_step(description: str, heartbeat_seconds: float = 30):
 def get_all_feature_representations(
     data: DataSet, selected: list[str] | None = None,
     evaluation_split_name: str = "evaluation", report_progress: bool = True,
+    fitted: dict | None = None,
 ) -> dict[str, DataSet]:
     step = _feature_step if report_progress else lambda description: nullcontext()
     features = {}
     if selected is None or "raw_numeric" in selected:
         with step(f"raw_numeric: preparing train/val/{evaluation_split_name}"):
-            features["raw_numeric"] = _attach_traffic_categories(_get_clean_numeric_feature_dataset(data), data)
+            raw_state = {} if fitted is not None else None
+            features["raw_numeric"] = _attach_traffic_categories(_get_clean_numeric_feature_dataset(data, raw_state), data)
+            if fitted is not None:
+                fitted["raw_numeric"] = raw_state
     if selected == ["raw_numeric"]:
         return features
     with step(f"scaling: fit train ({len(data.train.y):,} rows), transform val/{evaluation_split_name}"):
-        scaled = _get_scaled_feature_splits(data)
+        scaled_state = {} if fitted is not None else None
+        scaled = _get_scaled_feature_splits(data, scaled_state)
     labels = data.train.label_encoder.transform(data.train.y)
 
     reducers = {
@@ -247,6 +254,8 @@ def get_all_feature_representations(
         )
         result = DataSet(train=train, val=val, test=test)
         features[reducer_name] = _attach_traffic_categories(result, data)
+        if fitted is not None:
+            fitted[reducer_name] = {**scaled_state, "reducer": reducer}
     return features
 
 
@@ -359,7 +368,7 @@ def _split_features_and_labels(
     )
 
 
-def _get_scaled_feature_splits(data: DataSet) -> dict[str, pd.DataFrame]:
+def _get_scaled_feature_splits(data: DataSet, fitted: dict | None = None) -> dict[str, pd.DataFrame]:
     numeric_columns = data.train.x.select_dtypes(include="number").columns
     if numeric_columns.empty:
         raise ValueError("No numeric feature columns were found in the training split.")
@@ -374,6 +383,8 @@ def _get_scaled_feature_splits(data: DataSet) -> dict[str, pd.DataFrame]:
 
     scaler = StandardScaler()
     scaled_train = scaler.fit_transform(feature_splits["train"])
+    if fitted is not None:
+        fitted.update(fill_values=fill_values, scaler=scaler)
     return {
         "train": pd.DataFrame(scaled_train, columns=numeric_columns, index=data.train.x.index),
         "val": pd.DataFrame(
@@ -389,10 +400,12 @@ def _get_scaled_feature_splits(data: DataSet) -> dict[str, pd.DataFrame]:
     }
 
 
-def _get_clean_numeric_feature_dataset(data: DataSet) -> DataSet:
+def _get_clean_numeric_feature_dataset(data: DataSet, fitted: dict | None = None) -> DataSet:
     numeric_columns = data.train.x.select_dtypes(include="number").columns
     train_features = _clean_numeric_features(data.train.x, numeric_columns)
     fill_values = train_features.median(numeric_only=True).fillna(0)
+    if fitted is not None:
+        fitted.update(fill_values=fill_values)
 
     return DataSet(
         train=X_and_Y(
