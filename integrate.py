@@ -50,6 +50,8 @@ def parse_args(argv=None):
 
     evaluate = commands.add_parser("evaluate", help="Score run folders and compare with Suricata.")
     evaluate.add_argument("runs", nargs="+", type=Path, help="Folders made by integration/run_pcap.sh.")
+    evaluate.add_argument("--split", choices=["test", "dev"], default="test",
+                          help="Which held-out split to score (default: the final unseen test split).")
     evaluate.add_argument("--out", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output directory.")
     return parser.parse_args(argv)
 
@@ -68,7 +70,7 @@ def main(argv=None) -> None:
 
     bundle = ModelStore.load(args.model)
     labelled = data.assign(row_id=range(len(data)))
-    test_rows = ModelStore.test_row_ids(data)
+    test_rows = ModelStore.test_row_ids(data, args.split)
     flows = pd.concat(
         [load_run(run, bundle, labelled, test_rows) for run in ZeekFlows.run_folders(args.runs)], ignore_index=True
     )

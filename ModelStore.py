@@ -78,7 +78,8 @@ def score(bundle: ModelBundle, flows: pd.DataFrame) -> np.ndarray:
     return bundle.model.predict_proba(x)[:, 1]
 
 
-def test_row_ids(data: pd.DataFrame) -> np.ndarray:
-    """Row positions in the CSV that fall in the held-out test split."""
+def test_row_ids(data: pd.DataFrame, split: str = "test") -> np.ndarray:
+    """Row positions in the CSV that fall in a held-out split: "test" (final, unseen) or "dev"."""
     indexed = data.assign(row_id=np.arange(len(data)))
-    return DataHandler.get_stratified_split(indexed).test.x["row_id"].to_numpy()
+    # same frames that `main.py --init` writes to data/splits
+    return DataHandler._get_stratified_frames(indexed)[split]["row_id"].to_numpy()
