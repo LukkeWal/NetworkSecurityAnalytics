@@ -305,8 +305,6 @@ def _get_binary_scale_pos_weight(target: pd.Series | None) -> float | None:
     positive_label = 1 if 1 in counts.index else counts.index.max()
     positive_count = int(counts[positive_label])
     negative_count = int(len(target) - positive_count)
-    if positive_count == 0:
-        return None
     return negative_count / positive_count
 
 

@@ -3,7 +3,7 @@ DataPreprocessing allows us to alter the training data to better fit our task.
 We will:
 - majority class undersampling
 - minority class oversampling (oversampling will be performed per attack type)
-- feature transformation with PCA, UMAP, supervised UMAP, and t-SNE
+- feature transformation with PCA, UMAP, supervised UMAP
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from time import perf_counter
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils import resample
 import umap
 
-from DataHandler import DataSet, X_and_Y
+from DataHandler import DataSet, X_and_Y, _split_features_and_labels
 
 
 
@@ -45,55 +45,12 @@ def preprocess_data(data: DataSet, fitted: dict | None = None) -> DataSet:
     )
 
 
-def sample_data(
-    data: DataSet,
-    sample_size: int,
-    random_state: int = RANDOM_STATE,
-) -> DataSet:
-    """Return a reproducible sample while preserving the train/val/test structure."""
-    split_sizes = {
-        "train": len(data.train.x),
-        "val": len(data.val.x),
-        "test": len(data.test.x),
-    }
-    total_size = sum(split_sizes.values())
-    if total_size <= sample_size:
-        return data
-
-    sample_sizes = _allocate_split_sample_sizes(split_sizes, sample_size)
-    return DataSet(
-        train=_sample_split(data.train, sample_sizes["train"], random_state),
-        val=_sample_split(data.val, sample_sizes["val"], random_state),
-        test=_sample_split(data.test, sample_sizes["test"], random_state),
-    )
-
-
-def dataset_to_data_frame(data: DataSet) -> pd.DataFrame:
-    """Combine a DataSet back into a DataFrame with the target column restored."""
-    return pd.concat(
-        [
-            _combine_features_and_labels(data.train),
-            _combine_features_and_labels(data.val),
-            _combine_features_and_labels(data.test),
-        ],
-        ignore_index=True,
-    )
-
-
 def get_numeric_features(data: pd.DataFrame, exclude_column: str | None = TARGET_COLUMN) -> pd.DataFrame:
     """Return numeric feature columns with missing and infinite values handled."""
     features = data.drop(columns=[exclude_column], errors="ignore") if exclude_column else data
     features = features.select_dtypes(include="number")
     features = features.replace([np.inf, -np.inf], np.nan)
     return features.fillna(features.median(numeric_only=True)).fillna(0)
-
-
-def get_scaled_features(data: pd.DataFrame, exclude_column: str | None = TARGET_COLUMN) -> pd.DataFrame:
-    """Return standardized numeric features as a DataFrame."""
-    features = get_numeric_features(data, exclude_column)
-    scaler = StandardScaler()
-    scaled_features = scaler.fit_transform(features)
-    return pd.DataFrame(scaled_features, columns=features.columns, index=features.index)
 
 
 def majority_class_undersampling(
@@ -299,73 +256,10 @@ def _clean_numeric_features(
     return features.fillna(fill_values).fillna(0)
 
 
-def _allocate_split_sample_sizes(split_sizes: dict[str, int], sample_size: int) -> dict[str, int]:
-    raw_sizes = {
-        split_name: sample_size * split_size / sum(split_sizes.values())
-        for split_name, split_size in split_sizes.items()
-    }
-    sample_sizes = {
-        split_name: min(split_sizes[split_name], int(np.floor(raw_size)))
-        for split_name, raw_size in raw_sizes.items()
-    }
-
-    remaining = sample_size - sum(sample_sizes.values())
-    split_names_by_remainder = sorted(
-        split_sizes,
-        key=lambda split_name: raw_sizes[split_name] - sample_sizes[split_name],
-        reverse=True,
-    )
-    while remaining > 0:
-        allocated_this_pass = False
-        for split_name in split_names_by_remainder:
-            if sample_sizes[split_name] >= split_sizes[split_name]:
-                continue
-            sample_sizes[split_name] += 1
-            remaining -= 1
-            allocated_this_pass = True
-            if remaining == 0:
-                break
-        if not allocated_this_pass:
-            break
-
-    return sample_sizes
-
-
-def _sample_split(split: X_and_Y, sample_size: int, random_state: int) -> X_and_Y:
-    if sample_size == 0:
-        return X_and_Y(
-            x=split.x.iloc[0:0].reset_index(drop=True),
-            y=split.y.iloc[0:0].reset_index(drop=True),
-            label_encoder=split.label_encoder,
-        )
-
-    sampled_indices = split.x.sample(n=sample_size, random_state=random_state).index
-    return X_and_Y(
-        x=split.x.loc[sampled_indices].reset_index(drop=True),
-        y=split.y.loc[sampled_indices].reset_index(drop=True),
-        label_encoder=split.label_encoder,
-    )
-
-
 def _combine_features_and_labels(split: X_and_Y) -> pd.DataFrame:
     combined_data = split.x.copy()
     combined_data[TARGET_COLUMN] = split.y.to_numpy()
     return combined_data
-
-
-def _split_features_and_labels(
-    data: pd.DataFrame,
-    label_encoder: LabelEncoder | None = None,
-) -> X_and_Y:
-    if label_encoder is None:
-        label_encoder = LabelEncoder()
-        label_encoder.fit(data[TARGET_COLUMN])
-
-    return X_and_Y(
-        x=data.drop(columns=TARGET_COLUMN).reset_index(drop=True),
-        y=data[TARGET_COLUMN].reset_index(drop=True),
-        label_encoder=label_encoder,
-    )
 
 
 def _get_scaled_feature_splits(data: DataSet, fitted: dict | None = None) -> dict[str, pd.DataFrame]:
@@ -433,3 +327,10 @@ def _build_component_data_frame(
 ) -> pd.DataFrame:
     component_columns = [f"{prefix}_{index + 1}" for index in range(components.shape[1])]
     return pd.DataFrame(components, columns=component_columns, index=source_data.index)
+
+
+RESAMPLING_STRATEGIES = {
+    "no_resampling": lambda data: data,
+    "undersample_majority": majority_class_undersampling,
+    "oversample_minority": minority_class_oversampling,
+}

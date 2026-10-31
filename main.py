@@ -11,6 +11,7 @@ import FeatureCache
 import Trainer
 import Evaluate
 import ModelArtifacts
+import PreProcessing
 import pandas as pd
 
 EXPLORATION_SAMPLE_SIZE = None
@@ -36,10 +37,6 @@ def blanket_search(feature_representations_by_resampling: dict, sample_size=EXPL
         )
     return trained_models
 
-def evaluate(trained_models):
-    return Evaluate.evaluate_classifiers(trained_models)
-
-
 FEATURE_NAMES = FeatureCache.FEATURE_NAMES
 MODEL_NAMES = list(Trainer.get_classifiers()) + ["xgboost_scale_pos_weight"]
 
@@ -55,7 +52,7 @@ def parse_args(argv=None):
     parser.add_argument("--sample-size", "--exploration-sample-size", type=int,
                         default=EXPLORATION_SAMPLE_SIZE, help="Sample rows from train.csv and split 60/10/20/10 (last 10%% withheld); omit to use fixed development splits.")
     parser.add_argument("--resampling", nargs="+",
-                        choices=["no_resampling", "undersample_majority", "oversample_minority"],
+                        choices=list(PreProcessing.RESAMPLING_STRATEGIES),
                         help="Resampling strategies (default: all).")
     parser.add_argument("--model-params", default="{}", metavar="JSON",
                         help='JSON mapping model names to parameters; lists form a Cartesian grid; pipelines use classifier__PARAM keys.')
