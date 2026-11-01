@@ -1,0 +1,82 @@
+# HIKARI-style testbed: clients run the HIKARI authors' own scripts (with their mitmproxy setting), against a WordPress
+# site served over TLS under the authors' host names. One copy per run id; started with hikari.sh.
+name: tlshk
+
+x-wordpress-env: &wordpress-env
+  WORDPRESS_DB_HOST: db
+  WORDPRESS_DB_USER: wp
+  WORDPRESS_DB_PASSWORD: wp
+  WORDPRESS_DB_NAME: wp
+
+x-client: &client
+  image: tlslab-hikari:1
+  volumes:
+    - ./certs/server.crt.hikari:/certs/server.crt:ro
+    - ./hikari:/drivers:ro
+    - ./attacks:/attacks:ro
+  shm_size: 2g
+
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+      MARIADB_ROOT_PASSWORD: root
+
+  wordpress:
+    image: wordpress:6-apache
+    depends_on: [db]
+    environment:
+      <<: *wordpress-env
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://vic2.clouds.web.id');
+        define('WP_SITEURL', 'https://vic2.clouds.web.id');
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $$_SERVER['HTTPS'] = 'on'; }
+
+  tls:
+    image: nginx:alpine
+    depends_on: [wordpress]
+    volumes:
+      - ./nginx-hikari.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    networks:
+      default:
+        aliases: [vic2.clouds.web.id, vic3.clouds.web.id, vic4.clouds.web.id]
+
+  sniffer_server:
+    image: nicolaka/netshoot
+    network_mode: "service:tls"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./runs/${LAB_RUN:?run id not set, use hikari.sh}/captures:/captures
+    command: tcpdump -i eth0 -U -s 0 -w /captures/server.pcap "tcp port 443 or tcp port 80"
+
+  attacker_browser:
+    <<: *client
+  attacker_xmlrpc:
+    <<: *client
+  benign:
+    <<: *client
+
+  sniffer_benign:
+    image: nicolaka/netshoot
+    network_mode: "service:benign"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./runs/${LAB_RUN:?run id not set, use hikari.sh}/captures:/captures
+    command: tcpdump -i eth0 -U -s 0 -w /captures/benign.pcap "tcp port 443"
+
+  scanner:
+    image: wpscanteam/wpscan
+    platform: linux/amd64
+    entrypoint: ["sleep", "infinity"]
+
+  wpcli:
+    image: wordpress:cli
+    profiles: [tools]
+    depends_on: [wordpress]
+    user: "33:33"
+    environment: *wordpress-env
+    volumes_from: [wordpress]

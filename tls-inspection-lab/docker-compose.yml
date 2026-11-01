@@ -1,0 +1,72 @@
+# One copy of this stack per run id: lab.sh starts it with `docker compose -p tlslab-<run id>`,
+# so networks, containers and captures never collide between runs. Nothing is published on host ports.
+name: tlslab
+
+x-wordpress-env: &wordpress-env
+  WORDPRESS_DB_HOST: db
+  WORDPRESS_DB_USER: wp
+  WORDPRESS_DB_PASSWORD: wp
+  WORDPRESS_DB_NAME: wp
+
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+      MARIADB_ROOT_PASSWORD: root
+
+  wordpress:
+    image: wordpress:6-apache
+    depends_on: [db]
+    environment:
+      <<: *wordpress-env
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://tls');
+        define('WP_SITEURL', 'https://tls');
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $$_SERVER['HTTPS'] = 'on'; }
+
+  tls:
+    image: nginx:alpine
+    depends_on: [wordpress]
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+
+  sniffer:
+    image: nicolaka/netshoot
+    network_mode: "service:tls"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./runs/${LAB_RUN:?run id not set, use lab.sh}/captures:/captures
+    command: tcpdump -i eth0 -U -s 0 -w /captures/lab.pcap "tcp port 443 or tcp port 80"
+
+  browser_attacker:
+    image: selenium/standalone-chromium:latest
+    shm_size: 2g
+    environment: {SE_NODE_MAX_SESSIONS: "2", SE_NODE_OVERRIDE_MAX_SESSIONS: "true"}
+
+  browser_benign:
+    image: selenium/standalone-chromium:latest
+    shm_size: 2g
+    environment: {SE_NODE_MAX_SESSIONS: "4", SE_NODE_OVERRIDE_MAX_SESSIONS: "true"}
+
+  runner:
+    image: tlslab-runner:1
+    entrypoint: ["sleep", "infinity"]
+    volumes:
+      - ./attacks:/attacks:ro
+
+  scanner:
+    image: wpscanteam/wpscan
+    platform: linux/amd64
+    entrypoint: ["sleep", "infinity"]
+
+  wpcli:
+    image: wordpress:cli
+    profiles: [tools]
+    depends_on: [wordpress]
+    user: "33:33"
+    environment: *wordpress-env
+    volumes_from: [wordpress]
