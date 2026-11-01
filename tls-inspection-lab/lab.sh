@@ -14,12 +14,15 @@ ip_of() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 
 case $command in
 build)
+    [ -f certs/server.crt ] || certs/make_certs.sh 2>/dev/null
     docker image inspect tlslab-runner:1 >/dev/null 2>&1 || docker build -t tlslab-runner:1 runner
     ;;
 up)
     mkdir -p "$runs/captures"
     "$0" build "$run"
-    compose up -d db wordpress tls sniffer browser_attacker browser_benign runner scanner
+    # Create everything first, then start one container at a time: starting them all at once can hang Docker Desktop on macOS
+    compose create db wordpress tls sniffer browser_attacker browser_benign runner scanner
+    for service in db wordpress tls sniffer runner scanner browser_attacker browser_benign; do compose start "$service"; done
     until compose --profile tools run --rm -T wpcli wp core install --url=https://tls --title="Lab Shop" \
         --admin_user=admin --admin_password='Xq7-lab-Tr1cky-9fW' --admin_email=admin@lab.test --skip-email 2>/dev/null \
         || compose --profile tools run --rm -T wpcli wp core is-installed 2>/dev/null; do sleep 4; done

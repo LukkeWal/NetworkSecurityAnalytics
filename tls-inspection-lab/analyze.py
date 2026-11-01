@@ -44,7 +44,10 @@ def main(run: str) -> None:
 
     flows["Label"] = (flows["category"] != "Benign").astype(int)
     flows["traffic_category"] = flows["category"]
-    bundle = ModelStore.load(PROJECT / "models" / "xgboost_flow_classifier.joblib")
+    hikari_model = PROJECT / "models" / "xgboost_flow_classifier.joblib"
+    if not hikari_model.exists():  # fresh checkout: use the copy shipped with the demo
+        hikari_model = PROJECT / "demo" / "assets" / "xgboost_hikari_flow_classifier.joblib"
+    bundle = ModelStore.load(hikari_model)
     flows["model_flag"] = ModelStore.score(bundle, flows) >= bundle.threshold
 
     features = flows.drop(columns=["uid", "ts", "proto", "originh", "responh", "category", "model_flag"])
