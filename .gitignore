@@ -16,3 +16,7 @@ evaluation_results.csv
 tls-inspection-lab/certs/*.key
 tls-inspection-lab/certs/*.crt*
 demo/run/
+cache/
+tls-inspection-lab/runs/demo/
+results/
+tls-inspection-lab/runs/replay/

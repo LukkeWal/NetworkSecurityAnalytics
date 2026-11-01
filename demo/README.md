@@ -1,53 +1,35 @@
 # Demo
 
-Everything here replays **recorded** data offline. Nothing is live detection.
+Replays recorded captures offline through Suricata, Zeek (zeek-flowmeter) and the trained model, and prints which
+detector flagged which flow. Nothing here is live detection, and the slices have no labels, so it shows who flags what,
+not who is right. The labelled results are in the report.
 
-Set up once, from the repository root:
+Setup once, from the repository root:
 
 ```bash
 pip install -r requirements.txt
-brew install suricata zeek        # only needed for the replay (step 2)
-integration/setup.sh              # only needed for the replay: zeek-flowmeter and the ET Open rules (needs internet)
+brew install suricata zeek
+integration/setup.sh        # zeek-flowmeter and the ET Open rules (needs internet)
 ```
 
-## 1. Results page (about 1 second, no extra tools)
+Then:
 
-```bash
-python demo/build_report.py --open
-```
+| Command | What it shows | Time |
+| --- | --- | --- |
+| `./demo.sh check` | Smoke test: model scoring, alert-to-flow matching and the comparison code (no datasets or IDS needed) | 5 s |
+| `./demo.sh xss` | CSE-CIC-IDS2018 web attacks: Suricata alerts on the script tags, the model flags nothing | 30 s |
+| `./demo.sh dos` | CSE-CIC-IDS2018 DoS: the model flags about 740 flows, Suricata alerts on 4 | 30 s |
+| `./demo.sh hikari` | HIKARI-2021 HTTPS brute force: Suricata raises no alerts, the HIKARI model flags 218 of 219 flows | 20 s |
+| `./demo.sh lab` | Saved TLS lab capture: Suricata sees nothing in the encrypted traffic, but flags attacks once nginx has decrypted it; the lab model flags most of them either way. No Docker | 1 min |
+| `./demo.sh lab-live` | Runs the TLS lab for real (WordPress behind nginx TLS, benign and attack traffic), then analyses the capture and tears the stack down. Needs Docker Desktop and about 3 GB | 3 min |
 
-One page with the headline numbers, the figures and the tables for the three experiments (HIKARI-2021, TLS lab,
-CSE-CIC-IDS2018) and the model-as-a-filter result. It reads the CSVs and figures already in the repository.
+Colours in the replay output: green = both flagged, blue = Suricata only, yellow = model only.
 
-## 2. Replay a capture through Suricata, Zeek and the model (about 40 seconds)
+Notes:
 
-```bash
-demo/replay.sh xss      # web attacks: Suricata alerts, the model does not flag them
-demo/replay.sh dos      # DoS: the model flags 700+ flows, Suricata alerts on 4
-```
-
-The captures are short slices of CSE-CIC-IDS2018 (`demo/assets/`). The script runs Suricata with the ET Open rules and Zeek with
-zeek-flowmeter on the pcap, scores every rebuilt flow with the trained model, and prints the flows with both verdicts
-(blue = Suricata only, yellow = model only, green = both). The slices have no labels, so this shows who flags what, not who is right;
-the labelled results are in the results page. Some of these flows were in the model's training data, so the headline
-numbers come from the held-out evaluation, not from this replay.
-
-## 3. The TLS lab (optional, needs Docker, about 10 minutes for a small run)
-
-```bash
-cd tls-inspection-lab
-./lab.sh up demo
-BENIGN_ROUNDS=3 BRUTE_ATTEMPTS=30 XMLRPC_ATTEMPTS=100 ./lab.sh run demo
-./lab.sh stop demo
-python analyze.py demo
-./lab.sh down demo
-```
-
-This generates the traffic live against a WordPress site behind a TLS terminator; the analysis afterwards is offline.
-The saved full run (`tls-inspection-lab/runs/full/results/`) is what the results page and the report use. Run `lab.sh up` before
-the demo and have the saved results ready: the lab uses about 3 GB of Docker memory.
-
-## Reproducing the results from scratch
-
-See `integration/README.md` (HIKARI-2021 and CSE-CIC-IDS2018: downloads, train, evaluate) and
-`tls-inspection-lab/README.md`.
+- The slices are in `demo/assets/` (short cuts of the CSE-CIC-IDS2018, HIKARI-2021 and lab captures). The `hikari` slice
+  holds attack flows only. The `lab` slice is 70 seconds, so its per-type percentages rest on a handful of held-out flows
+  and move a little between runs; the stable numbers are in `tls-inspection-lab/runs/full/`.
+- Some replay flows were in the model's training data, so headline numbers come from the held-out evaluation.
+- `lab-live` uses small volumes, so its percentages are noisier than the saved full run. Start Docker Desktop first. Lab details are in `tls-inspection-lab/README.md`.
+- Training from scratch: `python main.py --init`, then the best-model command in the main README (about 20 s).
