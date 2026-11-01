@@ -20,7 +20,7 @@ import ModelStore
 import integrate_cic
 
 OUTPUT_PATH = integrate_cic.OUTPUT_PATH
-STRATIFIED_SPLIT = DataHandler.get_stratified_split
+STRATIFIED_SPLIT = ModelStore.stratified_split
 
 
 def main() -> None:
@@ -53,7 +53,7 @@ def main() -> None:
 def train(data: pd.DataFrame, flows: pd.DataFrame, split: str):
     """Train with the pipeline of ModelStore, swapping in the requested split for the duration of the call."""
     if split == "time":
-        DataHandler.get_stratified_split = lambda frame: time_split(frame, flows)
+        ModelStore.stratified_split = lambda frame: time_split(frame, flows)
     try:
         with tempfile.TemporaryDirectory() as scratch, contextlib.redirect_stdout(io.StringIO()):
             model_path = Path(scratch) / "model.joblib"
@@ -62,7 +62,7 @@ def train(data: pd.DataFrame, flows: pd.DataFrame, split: str):
             )
             bundle = ModelStore.load(model_path)
     finally:
-        DataHandler.get_stratified_split = STRATIFIED_SPLIT
+        ModelStore.stratified_split = STRATIFIED_SPLIT
     return metrics, bundle
 
 

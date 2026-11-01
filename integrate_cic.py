@@ -15,7 +15,6 @@ from pathlib import Path
 import pandas as pd
 
 import CicFlows
-import DataHandler
 import Evaluate
 import IntegrationReport
 import ModelStore
@@ -79,7 +78,7 @@ def unseen_attack_types(flows: pd.DataFrame, data: pd.DataFrame) -> pd.DataFrame
 
 def sweep(data: pd.DataFrame, models: list[str] | None, features: list[str]) -> pd.DataFrame:
     """Train every classifier and feature representation as main.py does, each with its threshold tuned at 95% recall."""
-    split = DataHandler.get_stratified_split(data)
+    split = ModelStore.stratified_split(data)
     processed = PreProcessing.preprocess_data(split)
     representations = PreProcessing.get_all_feature_representations(processed, selected=features)
     trained = Trainer.compare_feature_representations_and_classifiers(representations, len(data), model_names=models)

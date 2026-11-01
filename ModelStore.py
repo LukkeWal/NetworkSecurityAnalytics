@@ -11,6 +11,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import LabelEncoder
 
 import DataHandler
 import Evaluate
@@ -32,6 +33,16 @@ class ModelBundle:
     threshold: float
 
 
+def stratified_split(data: pd.DataFrame) -> DataSet:
+    """Split 60/10/20/10 and return the development data only (train, val, dev as test); the final 10% is withheld."""
+    frames = DataHandler._get_stratified_frames(data)
+    encoder = LabelEncoder().fit(frames["train"][DataHandler.TARGET_COLUMN])
+    return DataSet(**{
+        field: DataHandler._split_features_and_labels(frames[name], encoder)
+        for field, name in (("train", "train"), ("val", "val"), ("test", "dev"))
+    })
+
+
 def train_and_save(
     data: pd.DataFrame,
     model_path: Path | str = MODEL_PATH,
@@ -39,7 +50,7 @@ def train_and_save(
     results_file_path: Path | str = Evaluate.RESULTS_FILE_PATH,
 ) -> dict:
     """Train XGBoost on raw numeric features, tune its threshold on validation data and save it."""
-    split = DataHandler.get_stratified_split(data)
+    split = stratified_split(data)
     train = split.train
     if drop_background_from_training:
         keep = train.x[ATTACK_TYPE_COLUMN] != BACKGROUND_CATEGORY

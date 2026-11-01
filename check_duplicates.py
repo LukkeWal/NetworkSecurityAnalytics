@@ -5,6 +5,7 @@ Shows that the HIKARI-2021 CSV lists many attack flows twice, as the attack and 
 import pandas as pd
 
 import DataHandler
+import ModelStore
 
 FLOW_KEY = ["originh", "originp", "responh", "responp", "flow_duration", "fwd_pkts_tot", "bwd_pkts_tot"]
 
@@ -22,7 +23,7 @@ def main() -> None:
         print(f"{category:20s} {len(attack):6d} rows, {twins[FLOW_KEY].drop_duplicates().shape[0]:6d} with a twin, "
               f"{identical.mean() if len(twins) else 0:.1%} of twins identical in all {len(features)} other numeric features")
 
-    split = DataHandler.get_stratified_split(data.assign(row_id=range(len(data))))
+    split = ModelStore.stratified_split(data.assign(row_id=range(len(data))))
     split_of = {row: name for name, part in [("train", split.train), ("val", split.val), ("test", split.test)]
                 for row in part.x["row_id"]}
     labelled = data.assign(split=pd.Series(split_of))
