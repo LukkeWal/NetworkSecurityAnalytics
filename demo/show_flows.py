@@ -54,7 +54,7 @@ def main(run_dir: Path, model: str = "cic") -> None:
     print(f"\n{BOLD}Model as a filter behind Suricata{RESET}")
     print(f"  Suricata alerted on {kept + removed} flows; the filter keeps {kept} and removes {removed}.")
     print("  (No labels here, so this replay cannot say how many of the removed alerts were false alarms.\n"
-          "   The labelled evaluation is in integration/README.md.)\n")
+          "   The labelled evaluation is in the README.)\n")
 
 
 if __name__ == "__main__":

@@ -66,8 +66,124 @@ combined with `--evaluate-model`.
 - `Evaluate.py`: Selects validation thresholds, computes evaluation metrics and appends results to CSV files.
 - `Visualization.py`: Generates plots from saved experiment results or dataset CSV files.
 
-## Suricata integration and demo
+## Suricata integration, TLS lab and demo
 
-See `integration/README.md` for the HIKARI-2021 and CSE-CIC-IDS2018 comparisons, `tls-inspection-lab/README.md` for the TLS lab
-and `demo/README.md` for a short demo that replays recorded captures. `python smoke_test.py` checks the integration code
-without any dataset, Suricata or Zeek.
+Suricata (ET Open rules) and the trained model are run on the same recorded traffic and compared flow by flow. Zeek with
+zeek-flowmeter rebuilds the flows from each pcap, so the model sees the same features as the CSV. Suricata and Zeek run on
+Linux and macOS (`brew install suricata zeek`; WSL on Windows). Run everything from the repository root.
+
+```bash
+integration/setup.sh      # zeek-flowmeter and the ET Open rules (needs internet), once
+```
+
+### Demo
+
+Replays short recorded captures through Suricata, Zeek and the model and prints which detector flagged which flow. Nothing
+here is live detection, and the slices have no labels, so it shows who flags what, not who is right.
+
+| Command | What it shows | Time |
+| --- | --- | --- |
+| `./demo.sh check` | Smoke test: model scoring, alert-to-flow matching and the comparison code (no datasets or IDS needed) | 5 s |
+| `./demo.sh xss` | CSE-CIC-IDS2018 web attacks: Suricata alerts on the script tags, the model flags nothing | 30 s |
+| `./demo.sh dos` | CSE-CIC-IDS2018 DoS: the model flags about 740 flows, Suricata alerts on 4 | 30 s |
+| `./demo.sh hikari` | HIKARI-2021 HTTPS brute force: Suricata raises no alerts, the HIKARI model flags 218 of 219 flows | 20 s |
+| `./demo.sh lab` | Saved TLS lab capture: Suricata sees nothing in the encrypted traffic, but flags attacks once nginx has decrypted it; the lab model flags most of them either way. No Docker | 1 min |
+| `./demo.sh lab-live` | Runs the TLS lab for real (WordPress behind nginx TLS, benign and attack traffic), then analyses the capture and tears the stack down. Needs Docker Desktop and about 3 GB | 3 min |
+
+Colours in the replay output: green = both flagged, blue = Suricata only, yellow = model only.
+
+- The slices are in `demo/assets/` (short cuts of the CSE-CIC-IDS2018, HIKARI-2021 and lab captures). The `hikari` slice
+  holds attack flows only. The `lab` slice is 70 seconds, so its per-type percentages rest on a handful of held-out flows
+  and move a little between runs.
+- Some replay flows were in the model's training data, so headline numbers come from the held-out evaluation.
+- `lab-live` uses small volumes, so its percentages are noisier than a full run. Start Docker Desktop first.
+- `ModelStore.py` saves and loads the model used by the integration and the demo; `--export` above saves the full
+  `main.py` pipeline (model, preprocessing and metadata).
+
+### HIKARI-2021
+
+```bash
+python integration/fetch_hikari.py      # CSV to data/, six pcaps to pcaps/ (about 11 GB), --csv-only skips the pcaps
+for f in pcaps/*/pcap/*.pcap; do integration/run_pcap.sh $f; done
+python integrate.py train
+python integrate.py evaluate integration/runs
+```
+
+`train` saves the model (`--keep-background` keeps background traffic in training). `evaluate` scores the held-out test
+flows of the run folders and compares them with Suricata; results go to `integration_results/`.
+`run_pcap.sh` reads `HOME_NET` and `EXTERNAL_NET` (default `any`), `RULES_FILE`, `SURICATA_CONFIG` and `SKIP_ZEEK`.
+
+On the test flows of the six pcaps the model flags 7,333 of 7,360 attacks and Suricata none: the attacks are TLS to port 443,
+so the rules have no content to match. `check_duplicates.py` lists attack flows that also appear as Benign with identical features.
+
+### CSE-CIC-IDS2018
+
+The same comparison on CSE-CIC-IDS2018, whose attacks are mostly plaintext. The captures carry no labels, so flows from the
+attacker addresses documented for each day count as attacks (see `CicFlows.py`). The model is trained on these flows.
+
+```bash
+pip install remotezip
+python integration/fetch_cic_captures.py pcaps_cic
+for f in pcaps_cic/*/*.pcap; do
+    RULES_FILE=integration/et-open-no-engine.rules SURICATA_CONFIG=integration/suricata-alerts-only.yaml \
+        integration/run_pcap.sh $f integration/runs_cic/$(basename $(dirname $f))_$(basename $f .pcap)
+done
+python integrate_cic.py prepare integration/runs_cic
+python integrate_cic.py train
+python integrate_cic.py evaluate
+python integrate_cic.py unseen
+python integrate_cic.py sweep
+python check_generalization.py
+```
+
+`prepare` labels the flows and matches Suricata's alerts to them (`--max-per-attack` caps the flows per attack type, default 5000).
+`unseen` trains without one attack type at a time; `sweep` trains the classifiers from `main.py`; `check_generalization.py`
+retrains with a time-ordered split and on victim-server flows only. Results go to `integration_results_cic/`.
+
+On the held-out flows the model flags 5,769 of 6,088 attacks (1 false alarm) and Suricata 293 (5,355 false alarms).
+
+### TLS inspection lab
+
+WordPress brute-force and scan traffic behind an nginx TLS terminator. A recorder in nginx's network sees both the encrypted
+side (port 443) and the plain HTTP hop to WordPress (port 80), so Suricata and the model can be run on the same attacks
+encrypted and decrypted.
+
+```
+attackers ---HTTPS---> nginx (TLS 1.3) ---HTTP---> WordPress + MariaDB
+                          |
+                       recorder (tcpdump)
+```
+
+The encrypted side goes through Zeek + zeek-flowmeter (flows for the model) and Suricata. On the plain hop,
+`tls-inspection-lab/rewrite_client_addresses.py` restores each client's address and port from the headers nginx passes on.
+nginx closes every connection after one response, so each request is one flow.
+
+Needs Docker, Zeek and Suricata (`integration/setup.sh`), `tcpdump` and the packages in `requirements.txt`. The certificates
+are created on the first run, and `analyze.py` uses the HIKARI model from `python integrate.py train`, or the copy in
+`demo/assets/` if it has not been trained.
+
+```bash
+cd tls-inspection-lab
+./lab.sh up run-a        # start the stack, install WordPress
+./lab.sh run run-a       # benign browsing, browser and XML-RPC brute force, WPScan
+./lab.sh stop run-a
+python analyze.py run-a
+./lab.sh down run-a
+```
+
+`BENIGN_ROUNDS`, `BRUTE_ATTEMPTS` and `XMLRPC_ATTEMPTS` set the traffic volume. `hikari.sh` does the same with the HIKARI
+authors' own scripts (`AutoSignPost.py`, `autobrowse.py`, cloned when the image is built), their host names and their
+mitmproxy setting; probing is WPScan. It uses `analyze_authorscripts.py` and `analyze_background.py`.
+
+Share of flows flagged with the authors' scripts:
+
+| Traffic | Flows | Suricata, encrypted | Suricata, decrypted |
+| --- | --- | --- | --- |
+| Brute force (browser) | 2,709 | 0% | 18.9% |
+| Brute force XML-RPC | 5,145 | 0% | 0.6% |
+| Probing (WPScan) | 182 | 0% | 100% |
+| Benign signups | 752 | 0% | 0% |
+
+The version with our own attack code (50,629 attack and 65,097 benign flows) gives the same picture: 80.8% of attack flows
+caught decrypted, 12.3% of benign flows flagged. The generated traffic is similar to HIKARI-2021 but not the same dataset:
+probing is WPScan, there is no cryptominer traffic, and the target is a single WordPress server.
