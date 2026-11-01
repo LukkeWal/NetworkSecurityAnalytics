@@ -10,6 +10,8 @@ import DataHandler
 import FeatureCache
 import Trainer
 import Evaluate
+import ModelArtifacts
+import PreProcessing
 import pandas as pd
 
 EXPLORATION_SAMPLE_SIZE = None
@@ -35,10 +37,6 @@ def blanket_search(feature_representations_by_resampling: dict, sample_size=EXPL
         )
     return trained_models
 
-def evaluate(trained_models):
-    return Evaluate.evaluate_classifiers(trained_models)
-
-
 FEATURE_NAMES = FeatureCache.FEATURE_NAMES
 MODEL_NAMES = list(Trainer.get_classifiers()) + ["xgboost_scale_pos_weight"]
 
@@ -54,13 +52,17 @@ def parse_args(argv=None):
     parser.add_argument("--sample-size", "--exploration-sample-size", type=int,
                         default=EXPLORATION_SAMPLE_SIZE, help="Sample rows from train.csv and split 60/10/20/10 (last 10%% withheld); omit to use fixed development splits.")
     parser.add_argument("--resampling", nargs="+",
-                        choices=["no_resampling", "undersample_majority", "oversample_minority"],
+                        choices=list(PreProcessing.RESAMPLING_STRATEGIES),
                         help="Resampling strategies (default: all).")
     parser.add_argument("--model-params", default="{}", metavar="JSON",
                         help='JSON mapping model names to parameters; lists form a Cartesian grid; pipelines use classifier__PARAM keys.')
     parser.add_argument("--early-stopping-rounds", type=int, default=None,
                         help="XGBoost early-stopping patience (default: disabled; 0 disables). Per-model JSON overrides this.")
     parser.add_argument("--init", action="store_true", help="Create fixed stratified CSV splits and exit.")
+    parser.add_argument("--export", action="store_true",
+                        help="Save model, fitted preprocessing and JSON metadata bundles to results/models/; bypasses the feature cache.")
+    parser.add_argument("--evaluate-model", type=Path, metavar="PATH",
+                        help="Evaluate a saved bundle directory or metadata.json on dev (test with --final-evaluation); print results only.")
     parser.add_argument("--final-evaluation", action="store_true",
                         help="Explicitly evaluate selected models on reserved test.csv; no sampling.")
     parser.add_argument("--no-background", nargs="*", metavar="SPLIT",
@@ -70,6 +72,14 @@ def parse_args(argv=None):
     parser.add_argument("--rebuild-cache", action="store_true",
                         help="Recompute and replace the selected cached feature representations.")
     args = parser.parse_args(argv)
+    if args.evaluate_model is not None:
+        if (args.init or args.export or args.models is not None or args.features is not None
+                or args.resampling is not None or args.sample_size is not None or args.multiclass
+                or args.no_background is not None or args.model_params != "{}"
+                or args.early_stopping_rounds is not None or args.rebuild_cache
+                or args.cache_dir != FeatureCache.CACHE_PATH):
+            parser.error("--evaluate-model accepts only --final-evaluation; model settings come from the saved bundle")
+        return args
     if args.no_background is None:
         args.no_background = []
     elif not args.no_background or args.no_background == ["all"]:
@@ -122,16 +132,26 @@ def parse_args(argv=None):
 def main(argv=None) -> None:
     """Outline of the tasks this pipeline performs"""
     args = parse_args(argv)
+    if args.evaluate_model is not None:
+        try:
+            ModelArtifacts.evaluate_saved_model(args.evaluate_model, args.final_evaluation)
+        except (OSError, ValueError, KeyError) as error:
+            raise SystemExit(f"Cannot evaluate saved model: {error}") from error
+        return
     if args.init:
         DataHandler.initialize_splits(DataHandler.DATA_FILE_PATH, DataHandler.SPLITS_PATH)
         return
     try:
-        sample_feature_representations = FeatureCache.load_features(
-            sample_size=args.sample_size, resampling=args.resampling, features=args.features,
-            multiclass=args.multiclass, no_background=args.no_background,
-            final_evaluation=args.final_evaluation, cache_dir=args.cache_dir,
-            rebuild=args.rebuild_cache,
-        )
+        preprocessing = None
+        if args.export:
+            sample_feature_representations, preprocessing = ModelArtifacts.prepare_export_features(args)
+        else:
+            sample_feature_representations = FeatureCache.load_features(
+                sample_size=args.sample_size, resampling=args.resampling, features=args.features,
+                multiclass=args.multiclass, no_background=args.no_background,
+                final_evaluation=args.final_evaluation, cache_dir=args.cache_dir,
+                rebuild=args.rebuild_cache,
+            )
     except (FileNotFoundError, ValueError) as error:
         raise SystemExit(str(error)) from error
 
@@ -141,6 +161,8 @@ def main(argv=None) -> None:
     Evaluate.evaluate_classifiers(
         trained_models, results_file_path=args.results,
         evaluation_split="final_test" if args.final_evaluation else "test",
+        export_dir=Evaluate.MODELS_PATH if args.export else None,
+        preprocessing=preprocessing,
     )
 
 

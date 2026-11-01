@@ -59,13 +59,9 @@ def load_features(sample_size=None, resampling=None, features=None, multiclass=F
     """Load or build each representation; final_evaluation only selects its output split."""
     if final_evaluation and sample_size is not None:
         raise ValueError("--final-evaluation cannot be combined with --sample-size")
-    strategies = resampling or ["no_resampling", "undersample_majority", "oversample_minority"]
+    strategies = resampling or PreProcessing.RESAMPLING_STRATEGIES
     representations = features or FEATURE_NAMES
-    builders = {
-        "no_resampling": lambda data: data,
-        "undersample_majority": PreProcessing.majority_class_undersampling,
-        "oversample_minority": PreProcessing.minority_class_oversampling,
-    }
+    builders = PreProcessing.RESAMPLING_STRATEGIES
     prepared = None
     output = {}
     for strategy in strategies:

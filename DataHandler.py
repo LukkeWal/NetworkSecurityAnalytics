@@ -16,7 +16,6 @@ TARGET_COLUMN = "Label"
 TRAIN_SIZE = 0.60
 VALIDATION_SIZE = 0.10
 TEST_SIZE = 0.20
-FINAL_TEST_SIZE = 0.10
 SPLIT_NAMES = ("train", "val", "dev", "test")
 SPLIT_FILENAMES = {name: f"{name}.csv" for name in SPLIT_NAMES}
 RANDOM_STATE = 42
@@ -134,10 +133,15 @@ def load_training_sample(
                 )
             else:
                 sample = train
-            dataset = get_stratified_split(sample)
+            frames = _get_stratified_frames(sample)
+            encoder = LabelEncoder().fit(frames["train"][TARGET_COLUMN])
+            dataset = DataSet(**{
+                field: _split_features_and_labels(frames[name], encoder)
+                for field, name in (("train", "train"), ("val", "val"), ("test", "dev"))
+            })
             if include_all_splits:
                 heldout = _split_features_and_labels(
-                    _get_stratified_frames(sample)["test"], dataset.train.label_encoder
+                    frames["test"], encoder
                 )
         except ValueError as error:
             raise ValueError(f"Cannot create a stratified sample and run splits: {error}") from error
@@ -197,24 +201,10 @@ def _get_stratified_frames(data: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return dict(train=train, val=val, dev=test, test=final_test)
 
 
-def get_stratified_split(data: pd.DataFrame) -> DataSet:
-    """Split 60/10/20/10, returning development data only; final 10% is withheld."""
-    frames = _get_stratified_frames(data)
-    encoder = LabelEncoder().fit(frames["train"][TARGET_COLUMN])
-    return DataSet(**{
-        field: _split_features_and_labels(frames[name], encoder)
-        for field, name in (("train", "train"), ("val", "val"), ("test", "dev"))
-    })
-
-
 def _split_features_and_labels(
     data: pd.DataFrame,
-    label_encoder: LabelEncoder | None = None,
+    label_encoder: LabelEncoder,
 ) -> X_and_Y:
-    if label_encoder is None:
-        label_encoder = LabelEncoder()
-        label_encoder.fit(data[TARGET_COLUMN])
-
     return X_and_Y(
         x=data.drop(columns=TARGET_COLUMN).reset_index(drop=True),
         y=data[TARGET_COLUMN].reset_index(drop=True),

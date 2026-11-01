@@ -246,90 +246,6 @@ def plot_learning_curve(curve: dict, title: str = "Learning curve"):
     return axis
 
 
-def print_dataset_information(data: DataSet) -> None:
-    """Print compact information about the dataset."""
-    print("Full dataset information")
-    print("===================")
-    print(f"Rows: {len(data.train.y):,}")
-    print(f"Columns: {len(data.train.x.columns):,}")
-
-    print("\nColumn types")
-    print(_get_column_types(data).value_counts().to_string())
-
-    print("\nLabel distribution")
-    print(_get_labels(data).value_counts().sort_index().to_string())
-
-    if _has_feature_column(data, ATTACK_TYPE_COLUMN):
-        print("\nTraffic category distribution")
-        print(_get_feature_column(data, ATTACK_TYPE_COLUMN).value_counts().to_string())
-
-    missing_values = _get_missing_values(data)
-    missing_values = missing_values[missing_values > 0].sort_values(ascending=False)
-    print("\nMissing values")
-    if missing_values.empty:
-        print("No missing values found.")
-    else:
-        print(missing_values.head(MAX_FEATURES).to_string())
-
-    numeric_features = _select_numeric_features(data, TARGET_COLUMN)
-    print("\nNumeric feature summary")
-    print(numeric_features.describe().transpose().head(MAX_FEATURES).to_string())
-
-
-def create_exploration_visualizations(
-    data: DataSet,
-    sampled_data: DataSet,
-    figures_path: Path | str = FIGURES_PATH,
-) -> None:
-    """Create and save plots for quick dataset exploration."""
-    figures_path = Path(figures_path)
-    figures_path.mkdir(parents=True, exist_ok=True)
-
-    axis = plot_label_distribution(data)
-    _save_current_figure(axis, figures_path, "label_distribution.png")
-
-    if _has_feature_column(data, ATTACK_TYPE_COLUMN):
-        axis = _get_feature_column(data, ATTACK_TYPE_COLUMN).value_counts().plot(
-            kind="bar",
-            title="Traffic category distribution",
-        )
-        axis.set_xlabel(ATTACK_TYPE_COLUMN)
-        axis.set_ylabel("Count")
-        plt.tight_layout()
-        _save_current_figure(axis, figures_path, "traffic_category_distribution.png")
-
-    axis = plot_feature_correlations(
-        sampled_data,
-        exclude_column=TARGET_COLUMN,
-    )
-    _save_current_figure(axis, figures_path, "feature_correlations.png")
-
-    axis = plot_feature_distributions(
-        sampled_data,
-        exclude_column=TARGET_COLUMN,
-    )
-    _save_current_figure(axis, figures_path, "feature_distributions.png")
-
-    axis = plot_feature_distributions(
-        sampled_data,
-        exclude_column=TARGET_COLUMN,
-        log_scale=True,
-    )
-    _save_current_figure(axis, figures_path, "feature_distributions_log.png")
-
-    axis = plot_outliers(
-        sampled_data,
-        exclude_column=TARGET_COLUMN,
-    )
-    _save_current_figure(axis, figures_path, "feature_outliers.png")
-
-    tsne_2D = get_tsne_features(sampled_data)
-    axis = plot_feature_embedding(tsne_2D)
-    _save_current_figure(axis, figures_path, "tsne.png")
-
-    print(f"\nSaved exploratory visualizations to {figures_path.resolve()}")
-
-
 def plot_label_distribution(data: DataSet):
     """Visualize the target label distribution."""
     label_counts = _get_labels(data).value_counts().sort_index()
@@ -526,21 +442,6 @@ def _has_feature_column(data: DataSet, column: str) -> bool:
     if isinstance(data, pd.DataFrame):
         return column in data.columns
     return any(column in split.x.columns for split in [data.train, data.val, data.test])
-
-
-def _get_column_types(data: DataSet) -> pd.Series:
-    return pd.concat(
-        [
-            data.train.x.dtypes,
-            pd.Series({TARGET_COLUMN: data.train.y.dtype}),
-        ]
-    )
-
-
-def _get_missing_values(data: DataSet) -> pd.Series:
-    feature_missing_values = _get_all_features(data).isna().sum()
-    label_missing_values = pd.Series({TARGET_COLUMN: _get_labels(data).isna().sum()})
-    return pd.concat([feature_missing_values, label_missing_values])
 
 
 def _save_current_figure(axis, figures_path: Path, file_name: str) -> None:

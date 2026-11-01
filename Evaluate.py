@@ -33,6 +33,7 @@ from DataHandler import X_and_Y
 
 RESULTS_FILE_PATH = Path("results/binary_results.csv")
 CLASSIFICATION_RESULTS_FILE_PATH = Path("results/classification_results.csv")
+MODELS_PATH = Path("results/models")
 MINIMUM_RECALL_FOR_THRESHOLD = 0.95
 
 
@@ -40,26 +41,27 @@ def evaluate_classifier(
     trained_classifier: Any,
     validation_split: X_and_Y | None = None,
     test_split: X_and_Y | None = None,
-    results_file_path: Path | str = RESULTS_FILE_PATH,
+    results_file_path: Path | str | None = RESULTS_FILE_PATH,
     evaluation_split: str = "test",
+    threshold_result: dict | None = None,
 ) -> dict[str, Any]:
     """
     Tune the decision threshold on validation data and evaluate one trained classifier on test data.
 
-    If no splits are supplied, the validation and test splits stored on the trained classifier's dataset are used.
+    If no splits are supplied, use the trained classifier's dataset. A supplied
+    threshold_result bypasses tuning; results_file_path=None disables CSV recording.
     """
-    if validation_split is None:
-        validation_split = trained_classifier.dataset.val
     if test_split is None:
         test_split = trained_classifier.dataset.test
 
     x_test = test_split.x.select_dtypes(include="number")
     y_test = trained_classifier.label_encoder.transform(test_split.y)
-    threshold_result = _tune_threshold_for_precision_at_minimum_recall(
-        trained_classifier,
-        validation_split,
-        minimum_recall=MINIMUM_RECALL_FOR_THRESHOLD,
-    )
+    if threshold_result is None:
+        if validation_split is None:
+            validation_split = trained_classifier.dataset.val
+        threshold_result = _tune_threshold_for_precision_at_minimum_recall(
+            trained_classifier, validation_split, minimum_recall=MINIMUM_RECALL_FOR_THRESHOLD,
+        )
     binary = len(trained_classifier.label_encoder.classes_) == 2
     labels = list(range(len(trained_classifier.label_encoder.classes_)))
     scores = _get_positive_scores(trained_classifier.model, x_test) if binary else None
@@ -157,7 +159,8 @@ def evaluate_classifier(
             "selected": counts(y_pred),
         })
 
-    _append_results(metrics, Path(results_file_path))
+    if results_file_path is not None:
+        _append_results(metrics, Path(results_file_path))
     return metrics
 
 
@@ -310,17 +313,25 @@ def evaluate_classifiers(
     trained_classifiers: list[Any],
     results_file_path: Path | str = RESULTS_FILE_PATH,
     evaluation_split: str = "test",
+    export_dir: Path | str | None = None,
+    preprocessing: dict | None = None,
 ) -> pd.DataFrame:
     """Evaluate multiple trained classifiers and append every result to the CSV file."""
     results = []
     total_models = len(trained_classifiers)
     for index, trained_classifier in enumerate(trained_classifiers, start=1):
         print(f"evaluating {index}/{total_models} models", flush=True)
-        results.append(evaluate_classifier(
+        metrics = evaluate_classifier(
             trained_classifier,
             results_file_path=results_file_path,
             evaluation_split=evaluation_split,
-        ))
+        )
+        if export_dir is not None:
+            from ModelArtifacts import export_model
+            state = preprocessing[(trained_classifier.settings["resampling_strategy"],
+                                   trained_classifier.feature_representation_name)]
+            export_model(trained_classifier, metrics, results_file_path, export_dir, state)
+        results.append(metrics)
     return pd.DataFrame(results)
 
 

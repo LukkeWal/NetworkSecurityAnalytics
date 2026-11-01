@@ -1,5 +1,7 @@
 pandas
+joblib
 scikit-learn
 matplotlib
 umap-learn
 xgboost
+scapy
