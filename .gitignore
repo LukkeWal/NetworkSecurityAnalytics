@@ -20,3 +20,6 @@ cache/
 tls-inspection-lab/runs/demo/
 results/
 tls-inspection-lab/runs/replay/
+presentation_figures/
+integration_results*/figures/
+tls-inspection-lab/runs/*/results/*.png
