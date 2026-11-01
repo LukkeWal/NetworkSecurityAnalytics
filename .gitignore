@@ -23,3 +23,6 @@ tls-inspection-lab/runs/replay/
 presentation_figures/
 integration_results*/figures/
 tls-inspection-lab/runs/*/results/*.png
+integration_results/
+integration_results_cic/
+tls-inspection-lab/runs/

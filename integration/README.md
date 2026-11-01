@@ -10,7 +10,6 @@ integration/setup.sh                    # zeek-flowmeter and the ET Open rules
 for f in pcaps/*/pcap/*.pcap; do integration/run_pcap.sh $f; done
 python integrate.py train
 python integrate.py evaluate integration/runs
-python presentation_figures.py
 ```
 
 `train` saves the model (`--keep-background` keeps background traffic in training). `evaluate` scores the held-out test
@@ -57,7 +56,6 @@ python integrate_cic.py evaluate
 python integrate_cic.py unseen
 python integrate_cic.py sweep
 python check_generalization.py
-python presentation_figures.py
 ```
 
 `prepare` labels the flows and matches Suricata's alerts to them (`--max-per-attack` caps the flows per attack type, default 5000).

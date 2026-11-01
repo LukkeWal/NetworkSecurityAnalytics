@@ -1,5 +1,0 @@
-category,flows,hikari_model,suricata_encrypted,suricata_decrypted,lab_model,lab_model_test_flows
-Benign,1124,0.0,0.0,0.011565836298932384,0.017777777777777778,225
-Brute force (browser),908,0.0,0.0,0.1751101321585903,0.9797979797979798,198
-Brute force XML-RPC,600,0.0,0.0,0.0016666666666666668,1.0,119
-Probing (WPScan),1915,0.0,0.0,1.0,1.0,368

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the TLS lab for real (needs Docker Desktop, about 3 GB of memory, about 6 minutes), then analyses the capture.
-# Small traffic volumes, so the percentages are noisier than the saved full run in tls-inspection-lab/runs/full/.
+# Small traffic volumes, so the percentages are noisier than a full run.
 # Usage: demo/live_lab.sh [run-id]
 set -e
 cd "$(dirname "$0")/../tls-inspection-lab"

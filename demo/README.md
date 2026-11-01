@@ -29,7 +29,7 @@ Notes:
 
 - The slices are in `demo/assets/` (short cuts of the CSE-CIC-IDS2018, HIKARI-2021 and lab captures). The `hikari` slice
   holds attack flows only. The `lab` slice is 70 seconds, so its per-type percentages rest on a handful of held-out flows
-  and move a little between runs; the stable numbers are in `tls-inspection-lab/runs/full/`.
+  and move a little between runs; the stable numbers are the full-run ones in the report.
 - Some replay flows were in the model's training data, so headline numbers come from the held-out evaluation.
 - `lab-live` uses small volumes, so its percentages are noisier than the saved full run. Start Docker Desktop first. Lab details are in `tls-inspection-lab/README.md`.
 - Training from scratch: `python main.py --init`, then the best-model command in the main README (about 20 s).
